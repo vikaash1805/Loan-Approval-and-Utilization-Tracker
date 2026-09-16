@@ -25,9 +25,6 @@ from flask import Blueprint, request, jsonify, send_from_directory
 from flask_cors import CORS
 from pymongo import MongoClient, DESCENDING
 
-# ─────────────────────────────────────────────
-# React SPA static files (merged build)
-# ─────────────────────────────────────────────
 _REACT_DIR = os.path.join(os.path.dirname(__file__), "static", "loan_app")
 
 
@@ -83,12 +80,57 @@ def serialize(doc):
 # ─────────────────────────────────────────────
 def calculate_emi(principal: float, annual_rate: float, tenure_months: int) -> float:
     """Standard reducing-balance EMI formula."""
-    if annual_rate <= 0:
-        return round(principal / tenure_months, 2)
+    if annual_rate <= 0 or tenure_months <= 0:
+        return round(principal / max(tenure_months, 1), 2)
     monthly_rate = annual_rate / (12 * 100)
     emi = principal * monthly_rate * math.pow(1 + monthly_rate, tenure_months) / \
           (math.pow(1 + monthly_rate, tenure_months) - 1)
     return round(emi, 2)
+
+
+def calculate_amortization_schedule(principal: float, annual_rate: float, tenure_months: int) -> list:
+    """Generate month-by-month reducing-balance amortization schedule."""
+    if principal <= 0 or tenure_months <= 0:
+        return []
+    
+    emi = calculate_emi(principal, annual_rate, tenure_months)
+    monthly_rate = (annual_rate / (12 * 100)) if annual_rate > 0 else 0.0
+    
+    schedule = []
+    current_balance = round(float(principal), 2)
+    cumulative_interest = 0.0
+    cumulative_principal = 0.0
+    
+    for month in range(1, tenure_months + 1):
+        if current_balance <= 0:
+            break
+        interest_portion = round(current_balance * monthly_rate, 2)
+        if month == tenure_months or (emi - interest_portion) >= current_balance:
+            principal_portion = current_balance
+            month_emi = round(principal_portion + interest_portion, 2)
+            closing_balance = 0.0
+        else:
+            principal_portion = round(emi - interest_portion, 2)
+            month_emi = emi
+            closing_balance = round(max(current_balance - principal_portion, 0.0), 2)
+            
+        cumulative_interest = round(cumulative_interest + interest_portion, 2)
+        cumulative_principal = round(cumulative_principal + principal_portion, 2)
+        
+        schedule.append({
+            "month": month,
+            "opening_balance": current_balance,
+            "emi": month_emi,
+            "principal_portion": principal_portion,
+            "interest_portion": interest_portion,
+            "closing_balance": closing_balance,
+            "cumulative_interest": cumulative_interest,
+            "cumulative_principal": cumulative_principal
+        })
+        
+        current_balance = closing_balance
+        
+    return schedule
 
 
 # ─────────────────────────────────────────────
@@ -155,6 +197,7 @@ def apply_loan():
         "tenure_months": tenure,
         "interest_rate": rate,
         "purpose": str(data.get("purpose", "")).strip(),
+        "loan_documents": data.get("loan_documents", []),
         "status": "Pending",
         "applied_at": now,
         "updated_at": now,
@@ -380,6 +423,8 @@ def record_utilization():
 
     loan_update = {}
     new_balance = current_balance
+    principal_comp = 0.0
+    interest_comp = 0.0
 
     if event_type == "Disbursement":
         new_balance = current_balance + amount
@@ -387,17 +432,39 @@ def record_utilization():
             "total_disbursed": current_disbursed + amount,
             "outstanding_balance": new_balance,
         }
-    elif event_type in ("EMI Payment", "Prepayment", "Principal Repayment"):
-        new_balance = max(current_balance - amount, 0)
+    elif event_type == "EMI Payment":
+        # Amortized EMI: interest calculated on outstanding principal balance
+        rate = float(loan.get("interest_rate") or 10.5)
+        monthly_rate = (rate / (12 * 100)) if rate > 0 else 0.0
+        monthly_interest = round(current_balance * monthly_rate, 2)
+        if amount <= monthly_interest:
+            interest_comp = amount
+            principal_comp = 0.0
+        else:
+            interest_comp = monthly_interest
+            principal_comp = min(round(amount - interest_comp, 2), current_balance)
+
+        new_balance = max(round(current_balance - principal_comp, 2), 0.0)
         loan_update = {
-            "total_repaid": current_repaid + amount,
+            "total_repaid": round(current_repaid + principal_comp, 2),
+            "total_interest_paid": round(current_interest_paid + interest_comp, 2),
+            "outstanding_balance": new_balance,
+        }
+        if new_balance <= 0:
+            loan_update["status"] = "Closed"
+    elif event_type in ("Prepayment", "Principal Repayment"):
+        principal_comp = min(amount, current_balance)
+        new_balance = max(round(current_balance - principal_comp, 2), 0.0)
+        loan_update = {
+            "total_repaid": round(current_repaid + principal_comp, 2),
             "outstanding_balance": new_balance,
         }
         if new_balance <= 0:
             loan_update["status"] = "Closed"
     elif event_type == "Interest Payment":
+        interest_comp = amount
         loan_update = {
-            "total_interest_paid": current_interest_paid + amount
+            "total_interest_paid": round(current_interest_paid + amount, 2)
         }
     elif event_type == "Penalty":
         new_balance = current_balance + amount
@@ -411,17 +478,22 @@ def record_utilization():
     if loan_update:
         db["loan_applications"].update_one({"_id": oid}, {"$set": loan_update})
 
+    proof_url = data.get("proof_image") or data.get("proof_data")
+
     util_event = {
         "loan_id": loan_id,
         "applicant_name": loan.get("applicant_name"),
         "loan_type": loan.get("loan_type"),
         "event_type": event_type,
         "amount": amount,
+        "principal_component": principal_comp,
+        "interest_component": interest_comp,
         "balance_remaining": new_balance,
         "category": str(data.get("category", "General Expense")).strip(),
         "vendor_name": str(data.get("vendor_name", "")).strip(),
         "invoice_no": str(data.get("invoice_no", "")).strip(),
-        "proof_data": data.get("proof_data"),  # Base64 data URL for uploaded bill/invoice proof
+        "proof_data": proof_url,  # Base64 data URL for uploaded bill/invoice proof
+        "proof_image": proof_url,
         "payment_mode": str(data.get("payment_mode", "Bank Transfer")).strip(),
         "event_date": datetime.now(timezone.utc).isoformat(),
         "notes": str(data.get("notes", "")).strip()
@@ -433,6 +505,8 @@ def record_utilization():
         "success": True,
         "message": f"{event_type} record submitted successfully.",
         "event": util_event,
+        "principal_component": principal_comp,
+        "interest_component": interest_comp,
         "new_balance": new_balance
     }), 201
 
@@ -446,7 +520,7 @@ def repay_loan():
     data = request.get_json(silent=True) or {}
 
     loan_id = str(data.get("loan_id", "")).strip()
-    payment_type = str(data.get("payment_type", "principal")).strip().lower()  # "principal" or "interest"
+    payment_type = str(data.get("payment_type", "emi")).strip().lower()  # "emi", "principal", or "interest"
     
     if not loan_id:
         return jsonify({"success": False, "error": "Loan ID is required."}), 400
@@ -483,31 +557,63 @@ def repay_loan():
     payment_mode = str(data.get("payment_mode", "UPI")).strip()
     txn_ref = str(data.get("transaction_ref", f"TXN{int(datetime.now().timestamp()*1000)}")).strip()
     notes = str(data.get("notes", "")).strip()
-    proof_data = data.get("proof_data")
+    proof_data = data.get("proof_image") or data.get("proof_data")
     now_iso = datetime.now(timezone.utc).isoformat()
 
     loan_update = {"updated_at": now_iso}
 
-    if payment_type == "interest":
-        # OPTION 1: Pay Loan Interest
+    if payment_type in ("emi", "emi payment"):
+        # OPTION 1: Standard Amortized EMI Payment
+        # Monthly interest calculated on current reducing balance
+        rate = float(loan.get("interest_rate") or 10.5)
+        monthly_rate = (rate / (12 * 100)) if rate > 0 else 0.0
+        monthly_interest = round(current_balance * monthly_rate, 2)
+
+        if amount <= monthly_interest:
+            interest_comp = amount
+            principal_comp = 0.0
+        else:
+            interest_comp = monthly_interest
+            principal_comp = min(round(amount - interest_comp, 2), current_balance)
+
+        new_balance = max(round(current_balance - principal_comp, 2), 0.0)
+        new_repaid = round(current_repaid + principal_comp, 2)
+        new_interest_paid = round(current_interest_paid + interest_comp, 2)
+
+        loan_update["total_repaid"] = new_repaid
+        loan_update["total_interest_paid"] = new_interest_paid
+        loan_update["outstanding_balance"] = new_balance
+        if new_balance <= 0:
+            loan_update["status"] = "Closed"
+
+        event_name = "EMI Payment"
+        message = (
+            f"✓ EMI payment of ₹{amount:,.2f} processed. "
+            f"(Principal: ₹{principal_comp:,.2f}, Interest: ₹{interest_comp:,.2f}). "
+            f"Remaining Balance: ₹{new_balance:,.2f}"
+        )
+    elif payment_type == "interest":
+        # OPTION 2: Pay Loan Interest
+        interest_comp = amount
+        principal_comp = 0.0
         new_interest_paid = round(current_interest_paid + amount, 2)
         loan_update["total_interest_paid"] = new_interest_paid
         event_name = "Interest Payment"
         new_balance = current_balance
         message = f"✓ Interest payment of ₹{amount:,.2f} recorded successfully."
     else:
-        # OPTION 2: Repay Principal Amount
+        # OPTION 3: Repay Principal Amount (Prepayment / Foreclosure)
         payment_type = "principal"
-        if amount > current_balance:
-            amount = current_balance  # Cap at full payoff
-        new_balance = round(max(current_balance - amount, 0), 2)
-        new_repaid = round(current_repaid + amount, 2)
+        principal_comp = min(amount, current_balance)
+        interest_comp = 0.0
+        new_balance = max(round(current_balance - principal_comp, 2), 0.0)
+        new_repaid = round(current_repaid + principal_comp, 2)
         loan_update["total_repaid"] = new_repaid
         loan_update["outstanding_balance"] = new_balance
         if new_balance <= 0:
             loan_update["status"] = "Closed"
         event_name = "Principal Repayment"
-        message = f"✓ Principal repayment of ₹{amount:,.2f} processed. Remaining Balance: ₹{new_balance:,.2f}"
+        message = f"✓ Principal prepayment of ₹{principal_comp:,.2f} processed. Remaining Balance: ₹{new_balance:,.2f}"
 
     db["loan_applications"].update_one({"_id": oid}, {"$set": loan_update})
     updated_loan = serialize(db["loan_applications"].find_one({"_id": oid}))
@@ -519,10 +625,13 @@ def repay_loan():
         "event_type": event_name,
         "payment_type": payment_type,
         "amount": amount,
+        "principal_component": principal_comp,
+        "interest_component": interest_comp,
         "balance_remaining": new_balance,
         "payment_mode": payment_mode,
         "transaction_ref": txn_ref,
         "proof_data": proof_data,
+        "proof_image": proof_data,
         "event_date": now_iso,
         "notes": notes or f"{event_name} via {payment_mode}"
     }
@@ -534,12 +643,52 @@ def repay_loan():
         "message": message,
         "payment_type": payment_type,
         "amount_paid": amount,
+        "principal_component": principal_comp,
+        "interest_component": interest_comp,
         "new_balance": new_balance,
         "total_interest_paid": updated_loan.get("total_interest_paid", 0),
         "total_repaid": updated_loan.get("total_repaid", 0),
         "receipt": repay_event,
         "loan": updated_loan
     }), 200
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ROUTE 5C - Loan Amortization Schedule
+# GET /loan/applications/<loan_id>/amortization
+# ═══════════════════════════════════════════════════════════════════
+@loan_bp.route("/applications/<loan_id>/amortization", methods=["GET"])
+def get_amortization(loan_id):
+    oid = valid_object_id(loan_id)
+    if oid is None:
+        return jsonify({"success": False, "error": "Invalid loan ID format."}), 400
+
+    db = get_loan_db()
+    if db is None:
+        return jsonify({"success": False, "error": "Database unavailable."}), 503
+
+    doc = db["loan_applications"].find_one({"_id": oid})
+    if doc is None:
+        return jsonify({"success": False, "error": "Loan application not found."}), 404
+
+    principal = float(doc.get("approved_amount") or doc.get("amount_requested") or 0)
+    rate = float(doc.get("interest_rate") or 10.5)
+    tenure = int(doc.get("tenure_months") or 12)
+    schedule = calculate_amortization_schedule(principal, rate, tenure)
+    emi = calculate_emi(principal, rate, tenure)
+
+    return jsonify({
+        "success": True,
+        "loan_id": loan_id,
+        "principal": principal,
+        "interest_rate": rate,
+        "tenure_months": tenure,
+        "emi": emi,
+        "outstanding_balance": float(doc.get("outstanding_balance") or principal),
+        "total_repaid": float(doc.get("total_repaid") or 0),
+        "total_interest_paid": float(doc.get("total_interest_paid") or 0),
+        "schedule": schedule
+    })
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -552,16 +701,27 @@ def get_utilization(loan_id):
     if db is None:
         return jsonify({"success": False, "error": "Database unavailable."}), 503
 
+    oid = valid_object_id(loan_id)
+    loan_doc = db["loan_applications"].find_one({"_id": oid}) if oid else None
+
     events = list(
         db["loan_utilization"]
         .find({"loan_id": loan_id})
         .sort("event_date", DESCENDING)
     )
     events = [serialize(e) for e in events]
+    for e in events:
+        proof = e.get("proof_image") or e.get("proof_data")
+        e["proof_image"] = proof
+        e["proof_data"] = proof
+        dt = e.get("event_date") or e.get("created_at") or e.get("date")
+        e["event_date"] = dt
+        e["created_at"] = dt
 
     return jsonify({
         "success": True,
         "loan_id": loan_id,
+        "loan": serialize(loan_doc),
         "count": len(events),
         "events": events
     })
@@ -606,6 +766,7 @@ def dashboard():
                 },
                 "total_disbursed": {"$sum": {"$ifNull": ["$total_disbursed", 0]}},
                 "total_repaid": {"$sum": {"$ifNull": ["$total_repaid", 0]}},
+                "total_interest_paid": {"$sum": {"$ifNull": ["$total_interest_paid", 0]}},
                 "total_outstanding": {"$sum": {"$ifNull": ["$outstanding_balance", 0]}}
             }
         }
@@ -617,6 +778,7 @@ def dashboard():
         "total_approved": 0,
         "total_disbursed": 0,
         "total_repaid": 0,
+        "total_interest_paid": 0,
         "total_outstanding": 0
     }
     totals.pop("_id", None)
@@ -662,6 +824,7 @@ def dashboard():
             "total_approved": totals.get("total_approved", 0),
             "total_disbursed": totals.get("total_disbursed", 0),
             "total_repaid": totals.get("total_repaid", 0),
+            "total_interest_paid": totals.get("total_interest_paid", 0),
             "total_outstanding": totals.get("total_outstanding", 0),
             "utilization_rate_pct": utilization_rate,
             "pending_approvals": status_counts.get("Pending", 0),
@@ -676,14 +839,8 @@ def dashboard():
         "recent_applications": recent
     })
 
-
-# In-memory user cache fallback
 _MEMORY_USERS = {}
 
-# ═══════════════════════════════════════════════════════════════════
-# ROUTE 8 - Customer Registration
-# POST /loan/auth/register
-# ═══════════════════════════════════════════════════════════════════
 @loan_bp.route("/auth/register", methods=["POST"])
 def auth_register():
     data = request.get_json(silent=True) or {}
@@ -848,5 +1005,3 @@ def auth_login():
         "success": False,
         "error": f"No account found with email '{email}'. Please create an account first."
     }), 404
-
-

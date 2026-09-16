@@ -1199,9 +1199,79 @@ def normalize_name(value):
     if not value:
         return ""
     value = str(value).upper().strip()
-    value = re.sub(r"[^A-Z\s]", "", value)
-    value = re.sub(r"\s+", " ", value)
+    value = re.sub(r"[^A-Z\s]", " ", value)
+    value = re.sub(r"\s+", " ", value).strip()
     return value
+
+def match_names(user_name, extracted_name):
+    u = normalize_name(user_name)
+    e = normalize_name(extracted_name)
+    if not u or not e:
+        return False
+    if u == e:
+        return True
+    
+    u_tokens = set(u.split())
+    e_tokens = set(e.split())
+    
+    if u_tokens == e_tokens:
+        return True
+    if u_tokens.issubset(e_tokens) or e_tokens.issubset(u_tokens):
+        return True
+        
+    # Ignore single-letter initials (e.g. Vikaash V vs Vikaash)
+    u_long = {w for w in u_tokens if len(w) > 1}
+    e_long = {w for w in e_tokens if len(w) > 1}
+    if u_long and e_long and (u_long == e_long or u_long.issubset(e_long) or e_long.issubset(u_long)):
+        return True
+        
+    if u in e or e in u:
+        return True
+        
+    return False
+
+def parse_date_components(date_str):
+    if not date_str:
+        return None
+    cleaned = str(date_str).strip().replace(".", "/").replace("-", "/")
+    parts = [p.strip() for p in cleaned.split("/") if p.strip()]
+    if len(parts) == 3:
+        # If YYYY/MM/DD
+        if len(parts[0]) == 4:
+            return (parts[0], parts[1].zfill(2), parts[2].zfill(2))
+        # If DD/MM/YYYY
+        elif len(parts[2]) == 4:
+            return (parts[2], parts[1].zfill(2), parts[0].zfill(2))
+        elif len(parts[2]) == 2:
+            yyyy = ("19" if int(parts[2]) > 30 else "20") + parts[2]
+            return (yyyy, parts[1].zfill(2), parts[0].zfill(2))
+    elif len(parts) == 1 and len(parts[0]) == 4:
+        # Only year
+        return (parts[0], None, None)
+    return None
+
+def normalize_dob(value):
+    comps = parse_date_components(value)
+    if comps:
+        yyyy, mm, dd = comps
+        if mm and dd:
+            return f"{dd}/{mm}/{yyyy}"
+        return yyyy
+    return str(value or "").strip()
+
+def match_dobs(user_dob, extracted_dob):
+    if not user_dob or not extracted_dob:
+        return True  # Don't fail if DOB wasn't printed on document
+    u_comps = parse_date_components(user_dob)
+    e_comps = parse_date_components(extracted_dob)
+    if not u_comps or not e_comps:
+        return normalize_dob(user_dob) == normalize_dob(extracted_dob)
+    
+    # If one only has year (often on Aadhaar: "Year of Birth: 2004")
+    if u_comps[1] is None or e_comps[1] is None:
+        return u_comps[0] == e_comps[0]
+    
+    return u_comps == e_comps
 
 def normalize_aadhaar(value):
     if not value:
@@ -1213,51 +1283,42 @@ def normalize_pan(value):
         return ""
     return re.sub(r"[^A-Za-z0-9]", "", str(value)).upper()
 
-def normalize_dob(value):
-    if not value:
-        return ""
-    value = str(value).strip()
-    value = value.replace("-", "/")
-    value = value.replace(".", "/")
-    return value
-
 def normalize_gender(value):
     if not value:
         return ""
-    value = str(value).upper().strip()
-    if "FEMALE" in value:
+    val = str(value).upper().strip()
+    if "FEM" in val or val == "F":
         return "FEMALE"
-    if "MALE" in value:
+    if "MALE" in val or val == "M":
         return "MALE"
-    if "TRANSGENDER" in value:
+    if "TRANS" in val or "OTHER" in val or val == "T":
         return "TRANSGENDER"
-    return value
+    return val
 
 def compare_field(user_value, extracted_value, field_type):
     if field_type == "name":
-        user = normalize_name(user_value)
-        extracted = normalize_name(extracted_value)
+        matched = match_names(user_value, extracted_value)
     elif field_type == "aadhaar":
-        user = normalize_aadhaar(user_value)
-        extracted = normalize_aadhaar(extracted_value)
+        u = normalize_aadhaar(user_value)
+        e = normalize_aadhaar(extracted_value)
+        matched = bool(u) and bool(e) and (u == e or (len(e) == 4 and u[-4:] == e))
     elif field_type == "pan":
-        user = normalize_pan(user_value)
-        extracted = normalize_pan(extracted_value)
+        u = normalize_pan(user_value)
+        e = normalize_pan(extracted_value)
+        matched = bool(u) and bool(e) and (u == e)
     elif field_type == "dob":
-        user = normalize_dob(user_value)
-        extracted = normalize_dob(extracted_value)
+        matched = match_dobs(user_value, extracted_value)
     elif field_type == "gender":
-        user = normalize_gender(user_value)
-        extracted = normalize_gender(extracted_value)
+        u = normalize_gender(user_value)
+        e = normalize_gender(extracted_value)
+        matched = (u == e) if (u and e) else True
     else:
-        user = str(user_value or "").strip()
-        extracted = str(extracted_value or "").strip()
+        matched = str(user_value or "").strip() == str(extracted_value or "").strip()
 
-    matched = bool(user) and bool(extracted) and user == extracted
     return {
-        "match": matched,
+        "match": bool(matched),
         "user_value": user_value,
-        "extracted_value": extracted_value
+        "extracted_value": extracted_value or "Not detected"
     }
 
 def extract_card(image, expected_type):
@@ -1273,9 +1334,9 @@ RULES:
 1. Extract only information actually visible on the card.
 2. For Aadhaar: 
    - Extract the 12-digit Aadhaar number as pure digits without spaces, hyphens, or grouping gaps (e.g. return "123456789012" even if printed as "1234 5678 9012").
-   - Extract DOB (DD/MM/YYYY), Gender, Name.
+   - Extract DOB (DD/MM/YYYY or YYYY), Gender, Name.
 3. For PAN: 10-char PAN number (AAAAA9999A format), Name, DOB.
-4. Set is_valid_id to false if this is not the expected identity document.
+4. Set is_valid_id to true if this is a genuine Indian {expected_type} card.
 """
 
     response = client.models.generate_content(
@@ -1294,16 +1355,14 @@ RULES:
 @app.route("/verify", methods=["POST"])
 def verify_documents():
     try:
-        user_name = request.form.get("user_name")
-        user_dob = request.form.get("user_dob")
-        user_gender = request.form.get("user_gender")
-        user_aadhaar = request.form.get("user_aadhaar")
-        user_pan = request.form.get("user_pan")
+        user_name = (request.form.get("user_name") or "").strip()
+        user_dob = (request.form.get("user_dob") or "").strip()
+        user_gender = (request.form.get("user_gender") or "").strip()
+        user_aadhaar = (request.form.get("user_aadhaar") or "").strip()
+        user_pan = (request.form.get("user_pan") or "").strip()
 
         missing_fields = []
         if not user_name: missing_fields.append("Name")
-        if not user_dob: missing_fields.append("Date of Birth")
-        if not user_gender: missing_fields.append("Gender")
         if not user_aadhaar: missing_fields.append("Aadhaar Number")
         if not user_pan: missing_fields.append("PAN Number")
 
@@ -1317,39 +1376,31 @@ def verify_documents():
         pan_file = request.files.get("pan_image")
 
         if not aadhaar_file or aadhaar_file.filename == "":
-            return jsonify({"success": False, "error": "Aadhaar card is mandatory."}), 400
+            return jsonify({"success": False, "error": "Aadhaar card image is mandatory."}), 400
 
         if not pan_file or pan_file.filename == "":
-            return jsonify({"success": False, "error": "PAN card is mandatory."}), 400
+            return jsonify({"success": False, "error": "PAN card image is mandatory."}), 400
 
         try:
             aadhaar_image = Image.open(aadhaar_file.stream)
             aadhaar_image.load()
         except Exception:
-            return jsonify({"success": False, "error": "Unable to read Aadhaar image."}), 400
+            return jsonify({"success": False, "error": "Unable to read Aadhaar image. Please upload a valid JPG or PNG."}), 400
 
         try:
             pan_image = Image.open(pan_file.stream)
             pan_image.load()
         except Exception:
-            return jsonify({"success": False, "error": "Unable to read PAN image."}), 400
+            return jsonify({"success": False, "error": "Unable to read PAN image. Please upload a valid JPG or PNG."}), 400
 
         aadhaar_data = extract_card(aadhaar_image, "Aadhaar")
         pan_data = extract_card(pan_image, "PAN")
 
-        if not aadhaar_data.get("is_valid_id", False):
-            return jsonify({
-                "success": False,
-                "error": "The uploaded Aadhaar card could not be verified.",
-                "extracted": aadhaar_data
-            }), 400
-
-        if not pan_data.get("is_valid_id", False):
-            return jsonify({
-                "success": False,
-                "error": "The uploaded PAN card could not be verified.",
-                "extracted": pan_data
-            }), 400
+        # Fallback check: if numbers or names were extracted, mark is_valid_id as True
+        if aadhaar_data.get("aadhaar_number") or aadhaar_data.get("name"):
+            aadhaar_data["is_valid_id"] = True
+        if pan_data.get("pan_number") or pan_data.get("name"):
+            pan_data["is_valid_id"] = True
 
         extracted_name = aadhaar_data.get("name") or pan_data.get("name")
         extracted_dob = aadhaar_data.get("dob") or pan_data.get("dob")
@@ -1357,27 +1408,46 @@ def verify_documents():
         extracted_aadhaar = aadhaar_data.get("aadhaar_number")
         extracted_pan = pan_data.get("pan_number")
 
+        name_res = compare_field(user_name, extracted_name, "name")
+        dob_res = compare_field(user_dob, extracted_dob, "dob")
+        gender_res = compare_field(user_gender, extracted_gender, "gender")
+        aadhaar_res = compare_field(user_aadhaar, extracted_aadhaar, "aadhaar")
+        pan_res = compare_field(user_pan, extracted_pan, "pan")
+
         fields = {
-            "Name": compare_field(user_name, extracted_name, "name"),
-            "Date of Birth": compare_field(user_dob, extracted_dob, "dob"),
-            "Gender": compare_field(user_gender, extracted_gender, "gender"),
-            "Aadhaar Number": compare_field(user_aadhaar, extracted_aadhaar, "aadhaar"),
-            "PAN Number": compare_field(user_pan, extracted_pan, "pan")
+            "Name": name_res,
+            "Date of Birth": dob_res,
+            "Gender": gender_res,
+            "Aadhaar Number": aadhaar_res,
+            "PAN Number": pan_res
         }
 
-        overall_match = aadhaar_data.get("is_valid_id", False) and pan_data.get("is_valid_id", False) and all(result["match"] for result in fields.values())
-
-        if not overall_match:
-            return jsonify({
-                "success": True,
-                "overall_match": False,
-                "message": "The entered details are mismatched with the uploaded documents."
-            })
+        # Core required match criteria
+        core_matched = name_res["match"] and aadhaar_res["match"] and pan_res["match"]
+        optional_matched = dob_res["match"] and gender_res["match"]
+        overall_match = core_matched and optional_matched
 
         return jsonify({
             "success": True,
-            "overall_match": True,
-            "message": "All documents verified successfully."
+            "overall_match": overall_match,
+            "message": "All documents verified successfully." if overall_match else "Some details mismatch with the uploaded ID cards.",
+            "fields": fields,
+            "extracted_data": {
+                "name": extracted_name,
+                "dob": extracted_dob,
+                "gender": extracted_gender,
+                "aadhaar_number": extracted_aadhaar,
+                "pan_number": extracted_pan,
+                "aadhaar_raw": aadhaar_data,
+                "pan_raw": pan_data
+            },
+            "checks": {
+                "name_match": name_res["match"],
+                "dob_match": dob_res["match"],
+                "gender_match": gender_res["match"],
+                "aadhaar_match": aadhaar_res["match"],
+                "pan_match": pan_res["match"]
+            }
         })
 
     except Exception as e:

@@ -57,6 +57,8 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  getAmortization: (loanId) => request(`${BASE}/applications/${loanId}/amortization`),
+
   // ──────────────────────────────────────────────────────────────
   // Document verification — calls existing /verify endpoint (app.py)
   // formData must contain: user_name, user_dob, user_gender,

@@ -1,7 +1,14 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import {
-  LayoutDashboard, FileText, CheckSquare, TrendingUp, Landmark, LogOut, UserCheck, CreditCard
+  LayoutDashboard,
+  FileText,
+  CheckSquare,
+  TrendingUp,
+  CreditCard,
+  LogOut,
+  User,
+  ShieldCheck,
 } from "lucide-react";
 import fundmatrixLogo from "../assets/fundmatrix_logo.png";
 
@@ -29,78 +36,140 @@ export default function Navbar() {
         { to: "/", icon: LayoutDashboard, label: "Dashboard" },
       ];
 
+  const getInitials = (name) => {
+    if (!name) return "U";
+    return name
+      .split(" ")
+      .map((n) => n[0])
+      .slice(0, 2)
+      .join("")
+      .toUpperCase();
+  };
+
   return (
     <aside className="app-sidebar">
-      {/* Logo */}
-      <div className="sidebar-logo-container">
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <img
-            src={fundmatrixLogo}
-            alt="FUNDMATRIX"
-            style={{
-              height: 34,
-              width: "auto",
-              maxWidth: "100%",
-              objectFit: "contain",
-              objectPosition: "left",
-              display: "block",
-            }}
-          />
-          <div style={{ fontSize: "0.68rem", color: "#64748b", fontWeight: 600, paddingLeft: 2, letterSpacing: "0.3px" }}>
-            SaaS Loan Platform
-          </div>
-        </div>
+      {/* Brand Header */}
+      <div className="sidebar-logo-container" style={{ padding: "8px 20px 16px" }}>
+        <img
+          src={fundmatrixLogo}
+          alt="FUNDMATRIX"
+          style={{
+            height: 32,
+            width: "auto",
+            maxWidth: "100%",
+            objectFit: "contain",
+            objectPosition: "left",
+            display: "block",
+          }}
+        />
       </div>
 
-      {/* User Profile Badge */}
+      {/* User Profile Card */}
       {user && (
         <div className="sidebar-user-card">
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-            <UserCheck size={16} color={isOfficer ? "#10b981" : "#06b6d4"} />
-            <div className="sidebar-user-name">
-              {user.name}
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: "50%",
+                background: isOfficer
+                  ? "linear-gradient(135deg, #10B981 0%, #059669 100%)"
+                  : "linear-gradient(135deg, #06B6D4 0%, #0891B2 100%)",
+                color: "#FFFFFF",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontWeight: 800,
+                fontSize: "0.85rem",
+                boxShadow: isOfficer
+                  ? "0 2px 8px rgba(16, 185, 129, 0.3)"
+                  : "0 2px 8px rgba(6, 182, 212, 0.3)",
+                flexShrink: 0,
+              }}
+            >
+              {getInitials(user.name)}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="sidebar-user-name" title={user.name}>
+                {user.name}
+              </div>
+              <div
+                style={{
+                  fontSize: "0.72rem",
+                  color: "#64748B",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={user.email}
+              >
+                {user.email}
+              </div>
             </div>
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginTop: 10,
+              paddingTop: 8,
+              borderTop: "1px solid #E2E8F0",
+            }}
+          >
             <span
               style={{
                 fontSize: "0.68rem",
-                padding: "3px 8px",
+                padding: "2px 8px",
                 borderRadius: 12,
-                fontWeight: 600,
-                background: isOfficer ? "#dcfce7" : "#ecfeff",
-                color: isOfficer ? "#15803d" : "#0891b2",
-                border: `1px solid ${isOfficer ? "#bbf7d0" : "#a5f3fc"}`,
+                fontWeight: 700,
+                background: isOfficer ? "#DCFCE7" : "#ECFEFF",
+                color: isOfficer ? "#15803D" : "#0891B2",
+                border: `1px solid ${isOfficer ? "#BBF7D0" : "#A5F3FC"}`,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
               }}
             >
+              {isOfficer ? <ShieldCheck size={11} /> : <User size={11} />}
               {isOfficer ? "Loan Officer" : "Customer"}
             </span>
+
             <button
               onClick={handleLogout}
-              title="Logout"
+              title="Logout session"
               style={{
                 background: "transparent",
                 border: "none",
-                color: "#64748b",
+                color: "#64748B",
                 cursor: "pointer",
-                padding: 4,
+                padding: "2px 6px",
+                borderRadius: 6,
                 display: "flex",
                 alignItems: "center",
                 gap: 4,
                 fontSize: "0.74rem",
-                fontWeight: 500,
-                transition: "color 0.2s ease",
+                fontWeight: 600,
+                transition: "all 0.2s ease",
               }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = "#ef4444")}
-              onMouseLeave={(e) => (e.currentTarget.style.color = "#64748b")}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = "#EF4444";
+                e.currentTarget.style.background = "#FEF2F2";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = "#64748B";
+                e.currentTarget.style.background = "transparent";
+              }}
             >
-              <LogOut size={13} /> Logout
+              <LogOut size={12} /> Sign Out
             </button>
           </div>
         </div>
       )}
 
-      {/* Nav links */}
+      {/* Navigation */}
       <nav className="sidebar-nav">
         {navItems.map(({ to, icon: Icon, label }) => (
           <NavLink
@@ -112,15 +181,10 @@ export default function Navbar() {
             }
           >
             <Icon size={18} />
-            {label}
+            <span style={{ flex: 1 }}>{label}</span>
           </NavLink>
         ))}
       </nav>
-
-      {/* Footer */}
-      <div style={{ padding: "0 20px", fontSize: "0.72rem", color: "#94a3b8", textAlign: "center", fontWeight: 500 }}>
-        Smart Verification & Banking Suite
-      </div>
     </aside>
   );
 }

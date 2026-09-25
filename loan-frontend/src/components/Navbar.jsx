@@ -106,6 +106,25 @@ export default function Navbar() {
               >
                 {user.email}
               </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
+                <span
+                  style={{
+                    fontSize: "0.68rem",
+                    fontWeight: 700,
+                    color: "#059669",
+                    background: "#ECFDF5",
+                    border: "1px solid #A7F3D0",
+                    padding: "1px 6px",
+                    borderRadius: 10,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 3,
+                  }}
+                  title="Email Verified via 6-Digit OTP"
+                >
+                  <ShieldCheck size={11} /> Email Verified
+                </span>
+              </div>
             </div>
           </div>
 

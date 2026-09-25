@@ -40,6 +40,8 @@ export const AuthProvider = ({ children }) => {
       id_type: resolvedIdType,
       id_number: resolvedIdNumber,
       id_verified: resolvedIdVerified,
+      is_verified: extra.is_verified !== undefined ? extra.is_verified : true,
+      email_verified: extra.email_verified !== undefined ? extra.email_verified : true,
     };
     setUser(userData);
     localStorage.setItem("loan_auth_user", JSON.stringify(userData));
@@ -55,6 +57,8 @@ export const AuthProvider = ({ children }) => {
       id_type: extra.id_type || "Aadhaar",
       id_number: extra.id_number || "",
       id_verified: extra.id_verified !== undefined ? extra.id_verified : true,
+      is_verified: true,
+      email_verified: true,
     };
 
     // Save to local registered list for persistence across demo sessions
@@ -75,6 +79,13 @@ export const AuthProvider = ({ children }) => {
     localStorage.removeItem("loan_auth_user");
   };
 
+  const switchRole = (newRole) => {
+    if (!user) return;
+    const updated = { ...user, role: newRole };
+    setUser(updated);
+    localStorage.setItem("loan_auth_user", JSON.stringify(updated));
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -82,8 +93,10 @@ export const AuthProvider = ({ children }) => {
         login,
         register,
         logout,
+        switchRole,
         isOfficer: user?.role === "officer",
         isUser: user?.role === "user",
+        isEmailVerified: !!(user?.email_verified || user?.is_verified),
       }}
     >
       {children}

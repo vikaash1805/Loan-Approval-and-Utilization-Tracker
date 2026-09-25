@@ -157,6 +157,10 @@ export default function UtilizationTracker() {
   const handleProofChange = (e) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        setFormMsg("✗ Proof file exceeds 5 MB limit. Please upload a smaller file.");
+        return;
+      }
       setProofFile(file);
       const reader = new FileReader();
       reader.onload = (ev) => setProofPreview(ev.target.result);
@@ -166,8 +170,29 @@ export default function UtilizationTracker() {
 
   const handleFormSubmit = async (e) => {
     e.preventDefault();
-    if (!form.amount || parseFloat(form.amount) <= 0) {
-      setFormMsg("✗ Please enter a valid expense amount.");
+    if (!loanId) {
+      setFormMsg("✗ Please select an active disbursed loan account first.");
+      return;
+    }
+
+    const expAmt = parseFloat(form.amount);
+    if (isNaN(expAmt) || expAmt <= 0) {
+      setFormMsg("✗ Please enter a valid expense amount greater than ₹0.");
+      return;
+    }
+
+    if (!form.vendor_name || !form.vendor_name.trim()) {
+      setFormMsg("✗ Please provide the vendor or supplier name.");
+      return;
+    }
+
+    if (!form.invoice_no || !form.invoice_no.trim()) {
+      setFormMsg("✗ Please provide the invoice or voucher reference number.");
+      return;
+    }
+
+    if (expAmt > remainingCredit) {
+      setFormMsg(`✗ Expense amount (${fmt(expAmt)}) exceeds remaining credit balance (${fmt(remainingCredit)}).`);
       return;
     }
 

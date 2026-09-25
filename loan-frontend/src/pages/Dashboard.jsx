@@ -504,6 +504,7 @@ export default function Dashboard() {
                   <th>Tenure</th>
                   <th>Estimated EMI</th>
                   <th>Status</th>
+                  {isOfficer && <th style={{ textAlign: "right" }}>Underwriting Action</th>}
                 </tr>
               </thead>
               <tbody>
@@ -549,6 +550,35 @@ export default function Dashboard() {
                     </td>
                     <td style={{ color: "#059669", fontWeight: 800 }}>{fmt(a.emi)}/mo</td>
                     <td>{statusBadge(a.status)}</td>
+                    {isOfficer && (
+                      <td style={{ textAlign: "right" }}>
+                        {(a.status || "").toLowerCase() === "pending" ? (
+                          <button
+                            type="button"
+                            className="btn btn-success btn-sm"
+                            style={{ fontSize: "0.75rem", padding: "4px 10px" }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate("/approvals");
+                            }}
+                          >
+                            <CheckCircle size={12} /> Review & Approve
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            style={{ fontSize: "0.75rem", padding: "4px 8px" }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate("/approvals");
+                            }}
+                          >
+                            Pipeline →
+                          </button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

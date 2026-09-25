@@ -13,7 +13,6 @@ import {
   ShieldCheck,
   TrendingUp,
   FileText,
-  AlertCircle,
   Check,
   Eye,
   Home,
@@ -31,29 +30,32 @@ const STATUSES = ["", "Pending", "Approved", "Rejected", "Disbursed", "Closed"];
 
 const fmt = (n) => (n ? `₹${Number(n).toLocaleString("en-IN")}` : "₹0");
 
-const statusBadge = (s) => (
-  <span className={`badge badge-${s?.toLowerCase() || "pending"}`}>
-    <span
-      style={{
-        width: 6,
-        height: 6,
-        borderRadius: "50%",
-        background:
-          s === "Approved"
-            ? "#10B981"
-            : s === "Disbursed"
-            ? "#06B6D4"
-            : s === "Rejected"
-            ? "#EF4444"
-            : s === "Pending"
-            ? "#F59E0B"
-            : "#64748B",
-        display: "inline-block",
-      }}
-    />
-    {s}
-  </span>
-);
+const statusBadge = (s) => {
+  const sLower = s?.toLowerCase() || "pending";
+  return (
+    <span className={`badge badge-${sLower}`}>
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: "50%",
+          background:
+            sLower === "approved"
+              ? "#10B981"
+              : sLower === "disbursed"
+              ? "#06B6D4"
+              : sLower === "rejected"
+              ? "#EF4444"
+              : sLower === "pending"
+              ? "#F59E0B"
+              : "#64748B",
+          display: "inline-block",
+        }}
+      />
+      {s}
+    </span>
+  );
+};
 
 const dateStr = (d) =>
   d
@@ -135,7 +137,7 @@ export default function LoanApprovals() {
     setModal({ app, action });
     setActionForm({
       status: action,
-      approved_amount: app.amount_requested,
+      approved_amount: app.approved_amount || app.amount_requested || 10000,
       notes: "",
     });
     setActionMsg("");
@@ -143,13 +145,39 @@ export default function LoanApprovals() {
 
   const doAction = async () => {
     if (!modal) return;
-    setActioning(true);
     setActionMsg("");
+
+    // Validate based on underwriting decision
+    if (modal.action === "Approved") {
+      const amt = parseFloat(actionForm.approved_amount);
+      if (isNaN(amt) || amt < 10000) {
+        setActionMsg("✗ Approved amount must be at least ₹10,000.");
+        return;
+      }
+      const reqAmt = parseFloat(modal.app.amount_requested) || 0;
+      if (reqAmt > 0 && amt > reqAmt * 1.5) {
+        setActionMsg(`✗ Approved amount cannot exceed 150% of requested amount (${fmt(reqAmt)}).`);
+        return;
+      }
+    } else if (modal.action === "Rejected") {
+      if (!actionForm.notes || !actionForm.notes.trim()) {
+        setActionMsg("✗ Please provide rejection notes / reason for the applicant and audit record.");
+        return;
+      }
+    } else if (modal.action === "Disbursed") {
+      const currentStatus = (modal.app.status || "").toLowerCase();
+      if (currentStatus !== "approved") {
+        setActionMsg("✗ Loan must be in 'Approved' status before funds can be disbursed.");
+        return;
+      }
+    }
+
+    setActioning(true);
     try {
       await api.updateStatus(modal.app._id, {
         status: actionForm.status,
-        approved_amount: parseFloat(actionForm.approved_amount) || undefined,
-        notes: actionForm.notes,
+        approved_amount: modal.action === "Approved" ? parseFloat(actionForm.approved_amount) : undefined,
+        notes: actionForm.notes.trim(),
       });
       setActionMsg("✓ Status updated successfully!");
       setTimeout(() => {
@@ -354,16 +382,20 @@ export default function LoanApprovals() {
 
                             {isOfficer && (
                               <>
-                                {a.status === "Pending" && (
+                                {(a.status || "").toLowerCase() === "pending" && (
                                   <>
                                     <button
+                                      type="button"
                                       className="btn btn-success btn-sm"
+                                      title="Approve Loan Application"
                                       onClick={() => openModal(a, "Approved")}
                                     >
                                       <CheckCircle size={13} /> Approve
                                     </button>
                                     <button
+                                      type="button"
                                       className="btn btn-danger btn-sm"
+                                      title="Reject Loan Application"
                                       onClick={() => openModal(a, "Rejected")}
                                     >
                                       <XCircle size={13} /> Reject
@@ -371,17 +403,20 @@ export default function LoanApprovals() {
                                   </>
                                 )}
 
-                                {a.status === "Approved" && (
+                                {(a.status || "").toLowerCase() === "approved" && (
                                   <button
+                                    type="button"
                                     className="btn btn-accent btn-sm"
+                                    title="Disburse Approved Funds"
                                     onClick={() => openModal(a, "Disbursed")}
                                   >
                                     <Banknote size={13} /> Disburse
                                   </button>
                                 )}
 
-                                {a.status === "Disbursed" && (
+                                {(a.status || "").toLowerCase() === "disbursed" && (
                                   <button
+                                    type="button"
                                     className="btn btn-ghost btn-sm"
                                     onClick={() =>
                                       navigate("/utilization", {
@@ -432,20 +467,32 @@ export default function LoanApprovals() {
                   <input
                     className="form-control"
                     type="number"
+                    min="10000"
+                    step="1000"
+                    placeholder="e.g. 250000"
                     value={actionForm.approved_amount}
                     onChange={(e) =>
                       setActionForm((p) => ({ ...p, approved_amount: e.target.value }))
                     }
                   />
+                  <span style={{ fontSize: "0.75rem", color: "#64748B" }}>
+                    Requested: {fmt(modal.app.amount_requested)} (Minimum: ₹10,000)
+                  </span>
                 </div>
               )}
 
               <div className="form-group">
-                <label>Underwriting Notes / Decision Remarks</label>
+                <label>
+                  Underwriting Notes / Decision Remarks {modal.action === "Rejected" ? "*" : ""}
+                </label>
                 <textarea
                   className="form-control"
                   rows={3}
-                  placeholder="Enter remarks for audit and notification..."
+                  placeholder={
+                    modal.action === "Rejected"
+                      ? "Mandatory: Enter the reason for rejection (e.g. documentation mismatch, debt ratio)..."
+                      : "Enter remarks for audit and notification..."
+                  }
                   value={actionForm.notes}
                   onChange={(e) => setActionForm((p) => ({ ...p, notes: e.target.value }))}
                 />
@@ -792,16 +839,87 @@ export default function LoanApprovals() {
               </div>
             )}
 
-            <div className="modal-footer" style={{ marginTop: 20 }}>
-              <button
-                className="btn btn-primary"
-                onClick={() => {
-                  setViewDocModal(null);
-                  setActivePreviewDoc(null);
-                }}
-              >
-                Done Reviewing
-              </button>
+            <div
+              className="modal-footer"
+              style={{
+                marginTop: 20,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: 10,
+              }}
+            >
+              <div>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => {
+                    setViewDocModal(null);
+                    setActivePreviewDoc(null);
+                  }}
+                >
+                  Close Dossier
+                </button>
+              </div>
+
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                {isOfficer && (viewDocModal.status || "").toLowerCase() === "pending" && (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-danger"
+                      onClick={() => {
+                        const target = viewDocModal;
+                        setViewDocModal(null);
+                        openModal(target, "Rejected");
+                      }}
+                    >
+                      <XCircle size={14} /> Reject Application
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-success"
+                      onClick={() => {
+                        const target = viewDocModal;
+                        setViewDocModal(null);
+                        openModal(target, "Approved");
+                      }}
+                    >
+                      <CheckCircle size={14} /> Approve Loan
+                    </button>
+                  </>
+                )}
+
+                {isOfficer && (viewDocModal.status || "").toLowerCase() === "approved" && (
+                  <button
+                    type="button"
+                    className="btn btn-accent"
+                    onClick={() => {
+                      const target = viewDocModal;
+                      setViewDocModal(null);
+                      openModal(target, "Disbursed");
+                    }}
+                  >
+                    <Banknote size={14} /> Disburse Loan Funds
+                  </button>
+                )}
+
+                {(!isOfficer ||
+                  (viewDocModal.status || "").toLowerCase() === "disbursed" ||
+                  (viewDocModal.status || "").toLowerCase() === "closed") && (
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => {
+                      setViewDocModal(null);
+                      setActivePreviewDoc(null);
+                    }}
+                  >
+                    Done Reviewing
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

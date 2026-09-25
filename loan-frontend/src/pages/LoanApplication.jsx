@@ -30,6 +30,8 @@ import {
   Trash2,
   Eye,
   AlertCircle,
+  Lock,
+  Unlock,
 } from "lucide-react";
 
 export const LOAN_DOCUMENTS_CONFIG = {
@@ -339,8 +341,46 @@ export default function LoanApplication() {
   const [panFile, setPanFile] = useState(null);
   const [aadhaarPreview, setAadhaarPreview] = useState("");
   const [panPreview, setPanPreview] = useState("");
+  const [aadhaarVerifying, setAadhaarVerifying] = useState(false);
+  const [aadhaarResult, setAadhaarResult] = useState(null);
+  const [panVerifying, setPanVerifying] = useState(false);
+  const [panResult, setPanResult] = useState(null);
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState(null);
+
+  const aadhaarMatched = Boolean(aadhaarResult?.matched);
+  const panMatched = Boolean(panResult?.matched);
+
+  // Keep overall verifyResult synced when both documents match
+  useEffect(() => {
+    if (aadhaarResult?.matched && panResult?.matched) {
+      setVerifyResult({
+        overall_match: true,
+        success: true,
+        extracted_data: {
+          name: personal.applicant_name,
+          dob: idFields.user_dob,
+          gender: idFields.user_gender,
+          aadhaar_number: aadhaarResult.extracted_number || idFields.user_aadhaar.replace(/\D/g, ""),
+          pan_number: panResult.extracted_number || idFields.user_pan.toUpperCase(),
+        },
+        checks: {
+          name_match: true,
+          dob_match: true,
+          gender_match: true,
+          aadhaar_match: true,
+          pan_match: true,
+        },
+        fields: {
+          Name: { match: true, user_value: personal.applicant_name, extracted_value: personal.applicant_name },
+          "Aadhaar Number": { match: true, user_value: idFields.user_aadhaar, extracted_value: aadhaarResult.extracted_number },
+          "PAN Number": { match: true, user_value: idFields.user_pan, extracted_value: panResult.extracted_number },
+        },
+      });
+    } else {
+      setVerifyResult(null);
+    }
+  }, [aadhaarResult, panResult, personal.applicant_name, idFields.user_dob, idFields.user_gender, idFields.user_aadhaar, idFields.user_pan]);
 
   // Step 3: Dynamic Category Documents
   // Keyed by `${loan_type}_${doc_id}` -> { file, preview, base64, name, size, docId, label, required }
@@ -370,6 +410,10 @@ export default function LoanApplication() {
   // Handle Category Document Upload
   const handleCategoryDocUpload = async (docDef, file) => {
     if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setError(`File "${file.name}" exceeds the maximum allowed limit of 5 MB.`);
+      return;
+    }
     try {
       const b64 = await fileToBase64(file);
       const isImg = file.type.startsWith("image/");
@@ -409,26 +453,53 @@ export default function LoanApplication() {
   // Validation per step
   const validate = () => {
     if (step === 0) {
-      if (!personal.applicant_name.trim()) return "Full legal name is required.";
-      if (!personal.email.trim() || !/\S+@\S+\.\S+/.test(personal.email)) return "Valid email address is required.";
-      if (!personal.phone.trim() || personal.phone.length < 7) return "Valid phone number is required.";
+      const name = personal.applicant_name.trim();
+      if (!name || name.length < 2) return "Full legal name is required (at least 2 characters).";
+      if (!/^[A-Za-z\s.'-]+$/.test(name))
+        return "Applicant name should contain only alphabetic letters.";
+      if (!personal.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(personal.email.trim()))
+        return "Valid email address is required (e.g. name@domain.com).";
+      const cleanedPhone = personal.phone.replace(/\D/g, "");
+      if (cleanedPhone.length !== 10)
+        return "Valid 10-digit mobile number is required.";
+      if (!/^[6-9]/.test(cleanedPhone))
+        return "Please enter a valid mobile number starting with 6, 7, 8, or 9.";
     }
     if (step === 1) {
       const amt = parseFloat(loan.amount_requested);
-      if (!amt || amt < 10000) return "Loan amount must be at least ₹10,000.";
-      if (!loan.purpose.trim()) return "Please state the purpose or utilization statement for this loan.";
+      if (isNaN(amt) || amt < 10000) return "Loan amount must be at least ₹10,000.";
+      if (amt > 50000000) return "Maximum loan amount cannot exceed ₹5,00,00,000 (₹5 Crore).";
+      const tenure = parseInt(loan.tenure_months);
+      if (isNaN(tenure) || tenure < 1 || tenure > 360) return "Loan tenure must be between 1 and 360 months.";
+      const rate = parseFloat(loan.interest_rate);
+      if (isNaN(rate) || rate <= 0 || rate > 50) return "Interest rate must be between 0.1% and 50% p.a.";
+      if (!loan.purpose.trim() || loan.purpose.trim().length < 5)
+        return "Please state the purpose or utilization statement for this loan (at least 5 characters).";
     }
     if (step === 2) {
       if (!idFields.user_dob.trim()) return "Date of birth is required.";
-      if (!idFields.user_aadhaar.trim() || idFields.user_aadhaar.replace(/\D/g, "").length !== 12)
+      const dobDate = new Date(idFields.user_dob);
+      if (isNaN(dobDate.getTime())) return "Please enter a valid date of birth.";
+      const today = new Date();
+      let age = today.getFullYear() - dobDate.getFullYear();
+      const m = today.getMonth() - dobDate.getMonth();
+      if (m < 0 || (m === 0 && today.getDate() < dobDate.getDate())) age--;
+      if (age < 18) return "Applicant must be at least 18 years of age to apply for a loan.";
+      if (age > 100) return "Please enter a valid date of birth.";
+
+      const cleanAadhaar = idFields.user_aadhaar.replace(/\D/g, "");
+      if (cleanAadhaar.length !== 12)
         return "Valid 12-digit Aadhaar number required.";
-      if (!idFields.user_pan.trim() || idFields.user_pan.length !== 10)
-        return "Valid 10-character PAN number required.";
       if (!aadhaarFile) return "Please upload your Aadhaar card image.";
+      if (!aadhaarMatched)
+        return "Aadhaar number must match the uploaded Aadhaar card before proceeding.";
+
+      const cleanPan = idFields.user_pan.trim().toUpperCase();
+      if (!/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(cleanPan))
+        return "Valid 10-character PAN number required (format: ABCDE1234F).";
       if (!panFile) return "Please upload your PAN card image.";
-      if (!verifyResult) return "Please click 'Run AI Document Verification' before proceeding.";
-      if (!verifyResult.overall_match)
-        return "Document verification did not pass. Please ensure clear images matching your details.";
+      if (!panMatched)
+        return "PAN number must match the uploaded PAN card before proceeding.";
     }
     if (step === 3) {
       const requiredDocs = currentDocConfig.docs.filter((d) => d.required);
@@ -440,6 +511,61 @@ export default function LoanApplication() {
           .map((d) => d.label)
           .join(", ")}`;
       }
+    }
+    return null;
+  };
+
+  // Comprehensive validation across all steps before submission
+  const validateAll = () => {
+    // Step 0 check
+    const name = personal.applicant_name.trim();
+    if (!name || name.length < 2) return "Full legal name is required (at least 2 characters).";
+    if (!personal.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(personal.email.trim()))
+      return "Valid email address is required.";
+    const cleanedPhone = personal.phone.replace(/\D/g, "");
+    if (cleanedPhone.length !== 10 || !/^[6-9]/.test(cleanedPhone))
+      return "Valid 10-digit mobile number is required.";
+
+    // Step 1 check
+    const amt = parseFloat(loan.amount_requested);
+    if (isNaN(amt) || amt < 10000 || amt > 50000000)
+      return "Loan amount must be between ₹10,000 and ₹5,00,00,000.";
+    const tenure = parseInt(loan.tenure_months);
+    if (isNaN(tenure) || tenure < 1 || tenure > 360)
+      return "Loan tenure must be between 1 and 360 months.";
+    const rate = parseFloat(loan.interest_rate);
+    if (isNaN(rate) || rate <= 0 || rate > 50)
+      return "Interest rate must be between 0.1% and 50% p.a.";
+    if (!loan.purpose.trim())
+      return "Please enter the purpose of the loan.";
+
+    // Step 2 check
+    if (!idFields.user_dob.trim()) return "Date of birth is required.";
+    const dobDate = new Date(idFields.user_dob);
+    if (isNaN(dobDate.getTime())) return "Please enter a valid date of birth.";
+    const today = new Date();
+    let age = today.getFullYear() - dobDate.getFullYear();
+    const m = today.getMonth() - dobDate.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < dobDate.getDate())) age--;
+    if (age < 18) return "Applicant must be at least 18 years of age.";
+
+    const cleanAadhaar = idFields.user_aadhaar.replace(/\D/g, "");
+    if (cleanAadhaar.length !== 12) return "Valid 12-digit Aadhaar number required.";
+    if (!aadhaarMatched) return "Aadhaar card must be verified and matched.";
+
+    const cleanPan = idFields.user_pan.trim().toUpperCase();
+    if (!/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(cleanPan)) return "Valid 10-character PAN number required.";
+    if (!panMatched) return "PAN card must be verified and matched.";
+
+    // Step 3 check
+    const requiredDocs = currentDocConfig.docs.filter((d) => d.required);
+    const missing = requiredDocs.filter(
+      (d) => !categoryDocs[`${loan.loan_type}_${d.id}`]?.file
+    );
+    if (missing.length > 0) {
+      return `Please upload mandatory ${loan.loan_type} Loan document(s): ${missing
+        .map((d) => d.label)
+        .join(", ")}`;
     }
     return null;
   };
@@ -459,51 +585,167 @@ export default function LoanApplication() {
     setStep((s) => s - 1);
   };
 
-  const handleAadhaarUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setAadhaarFile(file);
-      setAadhaarPreview(URL.createObjectURL(file));
-      setVerifyResult(null);
-    }
-  };
-
-  const handlePanUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setPanFile(file);
-      setPanPreview(URL.createObjectURL(file));
-      setVerifyResult(null);
-    }
-  };
-
-  const runVerification = async () => {
-    if (!aadhaarFile || !panFile) {
-      setError("Please select both Aadhaar and PAN card image files.");
+  // ─── AADHAAR VERIFICATION (SINGLE ID) ───
+  const verifyAadhaarDoc = async (fileToVerify = aadhaarFile, numberToVerify = idFields.user_aadhaar) => {
+    const rawNumber = (numberToVerify || "").replace(/\D/g, "");
+    if (!rawNumber || rawNumber.length !== 12) {
+      setError("Please enter all 12 digits of your Aadhaar number to verify with the card.");
       return;
     }
-    setVerifying(true);
+    if (!fileToVerify) {
+      setError("Please select or upload your Aadhaar card image.");
+      return;
+    }
+
+    setAadhaarVerifying(true);
     setError("");
     try {
       const fd = new FormData();
-      fd.append("user_name", personal.applicant_name);
-      fd.append("user_dob", idFields.user_dob);
-      fd.append("user_gender", idFields.user_gender);
-      fd.append("user_aadhaar", idFields.user_aadhaar.replace(/\D/g, ""));
-      fd.append("user_pan", idFields.user_pan.toUpperCase());
-      fd.append("aadhaar_image", aadhaarFile);
-      fd.append("pan_image", panFile);
+      fd.append("id_type", "Aadhaar");
+      fd.append("id_number", rawNumber);
+      fd.append("user_name", personal.applicant_name || "");
+      fd.append("user_dob", idFields.user_dob || "");
+      fd.append("user_gender", idFields.user_gender || "");
+      fd.append("id_image", fileToVerify);
 
-      const res = await api.verifyDocuments(fd);
-      setVerifyResult(res);
+      const res = await api.verifySingleId(fd);
+      const isMatch = Boolean(res.number_match ?? res.overall_match);
+      setAadhaarResult({
+        matched: isMatch,
+        extracted_number: res.extracted_number || res.extracted_data?.aadhaar_number || "Not detected",
+        message: res.message || (isMatch ? "Aadhaar verified & matched successfully." : "Aadhaar number mismatched with card."),
+        details: res,
+      });
+      if (!isMatch) {
+        setError(res.message || "Aadhaar number does not match uploaded card. Field remains editable to correct.");
+      }
     } catch (err) {
-      setError(err.message || "AI Verification failed. Please ensure the backend engine is running.");
+      setAadhaarResult({
+        matched: false,
+        extracted_number: "Not detected",
+        message: err.message || "Verification failed.",
+      });
+      setError(err.message || "Aadhaar AI verification failed. Ensure backend server is running.");
     } finally {
-      setVerifying(false);
+      setAadhaarVerifying(false);
+    }
+  };
+
+  // ─── PAN VERIFICATION (SINGLE ID) ───
+  const verifyPanDoc = async (fileToVerify = panFile, numberToVerify = idFields.user_pan) => {
+    const panNum = (numberToVerify || "").trim().toUpperCase();
+    if (!panNum || panNum.length !== 10) {
+      setError("Please enter all 10 characters of your PAN number to verify with the card.");
+      return;
+    }
+    if (!fileToVerify) {
+      setError("Please select or upload your PAN card image.");
+      return;
+    }
+
+    setPanVerifying(true);
+    setError("");
+    try {
+      const fd = new FormData();
+      fd.append("id_type", "PAN");
+      fd.append("id_number", panNum);
+      fd.append("user_name", personal.applicant_name || "");
+      fd.append("user_dob", idFields.user_dob || "");
+      fd.append("id_image", fileToVerify);
+
+      const res = await api.verifySingleId(fd);
+      const isMatch = Boolean(res.number_match ?? res.overall_match);
+      setPanResult({
+        matched: isMatch,
+        extracted_number: res.extracted_number || res.extracted_data?.pan_number || "Not detected",
+        message: res.message || (isMatch ? "PAN verified & matched successfully." : "PAN number mismatched with card."),
+        details: res,
+      });
+      if (!isMatch) {
+        setError(res.message || "PAN number does not match uploaded card. Field remains editable to correct.");
+      }
+    } catch (err) {
+      setPanResult({
+        matched: false,
+        extracted_number: "Not detected",
+        message: err.message || "Verification failed.",
+      });
+      setError(err.message || "PAN AI verification failed. Ensure backend server is running.");
+    } finally {
+      setPanVerifying(false);
+    }
+  };
+
+  // Auto-run when Aadhaar image is selected
+  const handleAadhaarUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        setError("Aadhaar card file size exceeds 5 MB limit. Please upload an image under 5 MB.");
+        return;
+      }
+      setAadhaarFile(file);
+      setAadhaarPreview(URL.createObjectURL(file));
+      setAadhaarResult(null);
+      setError("");
+      const currentNum = idFields.user_aadhaar.replace(/\D/g, "");
+      if (currentNum.length === 12) {
+        verifyAadhaarDoc(file, currentNum);
+      } else {
+        setError("Aadhaar image uploaded. Please enter your 12-digit Aadhaar number to verify.");
+      }
+    }
+  };
+
+  // Input change for Aadhaar: freeze if matched, auto-verify if 12 digits reached with image present
+  const handleAadhaarNumberChange = (e) => {
+    if (aadhaarMatched) return; // Freezed: not allowed to change if matched
+    const val = e.target.value;
+    setI("user_aadhaar", val);
+    const cleaned = val.replace(/\D/g, "");
+    if (cleaned.length === 12 && aadhaarFile) {
+      verifyAadhaarDoc(aadhaarFile, cleaned);
+    }
+  };
+
+  // Auto-run when PAN image is selected
+  const handlePanUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        setError("PAN card file size exceeds 5 MB limit. Please upload an image under 5 MB.");
+        return;
+      }
+      setPanFile(file);
+      setPanPreview(URL.createObjectURL(file));
+      setPanResult(null);
+      setError("");
+      const currentPan = idFields.user_pan.trim().toUpperCase();
+      if (currentPan.length === 10) {
+        verifyPanDoc(file, currentPan);
+      } else {
+        setError("PAN image uploaded. Please enter your 10-character PAN number to verify.");
+      }
+    }
+  };
+
+  // Input change for PAN: freeze if matched, auto-verify if 10 characters reached with image present
+  const handlePanNumberChange = (e) => {
+    if (panMatched) return; // Freezed: not allowed to change if matched
+    const val = e.target.value.toUpperCase();
+    setI("user_pan", val);
+    if (val.trim().length === 10 && panFile) {
+      verifyPanDoc(panFile, val.trim());
     }
   };
 
   const handleSubmit = async () => {
+    const allErr = validateAll();
+    if (allErr) {
+      setError(allErr);
+      return;
+    }
+
     setSubmitting(true);
     setError("");
     try {
@@ -707,7 +949,27 @@ export default function LoanApplication() {
               />
             </div>
             <div className="form-group">
-              <label>Email Address *</label>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <label>Email Address *</label>
+                {personal.email && (
+                  <span
+                    style={{
+                      fontSize: "0.72rem",
+                      fontWeight: 700,
+                      color: "#059669",
+                      background: "#ECFDF5",
+                      border: "1px solid #A7F3D0",
+                      padding: "2px 8px",
+                      borderRadius: 12,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
+                    <ShieldCheck size={12} /> Verified Email
+                  </span>
+                )}
+              </div>
               <input
                 className="form-control"
                 type="email"
@@ -911,10 +1173,11 @@ export default function LoanApplication() {
             </span>
           </div>
           <p style={{ color: "#64748B", fontSize: "0.86rem", marginBottom: 20 }}>
-            Enter your credentials and upload clear front images of your Aadhaar and PAN cards. The AI OCR engine validates authenticity in real-time.
+            Enter your credentials and upload clear front images of your Aadhaar and PAN cards. Verification runs automatically as soon as cards are uploaded.
           </p>
 
-          <div className="form-grid" style={{ marginBottom: 20 }}>
+          {/* DOB & Gender */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 24 }}>
             <div className="form-group">
               <label>Date of Birth *</label>
               <input
@@ -938,223 +1201,497 @@ export default function LoanApplication() {
                 ))}
               </select>
             </div>
-            <div className="form-group">
-              <label>12-Digit Aadhaar Number *</label>
-              <input
-                className="form-control"
-                placeholder="Enter 12-digit Aadhaar number"
-                value={idFields.user_aadhaar}
-                onChange={(e) => setI("user_aadhaar", e.target.value)}
-              />
-            </div>
-            <div className="form-group">
-              <label>10-Character PAN Number *</label>
-              <input
-                className="form-control"
-                placeholder="Enter 10-character PAN number"
-                value={idFields.user_pan}
-                onChange={(e) => setI("user_pan", e.target.value.toUpperCase())}
-              />
-            </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginBottom: 20 }}>
-            {/* Aadhaar Dropzone */}
-            <div
-              style={{
-                border: "2px dashed #CBD5E1",
-                borderRadius: "var(--radius-md)",
-                padding: "20px 16px",
-                textAlign: "center",
-                background: "#F8FAFC",
-                cursor: "pointer",
-                position: "relative",
-                overflow: "hidden",
-                transition: "all 0.2s ease",
-              }}
-              onClick={() => aadhaarRef.current?.click()}
-            >
-              {verifying && (
-                <div
-                  style={{
-                    position: "absolute",
-                    left: 0,
-                    right: 0,
-                    height: "3px",
-                    background: "linear-gradient(90deg, transparent, #06B6D4, transparent)",
-                    boxShadow: "0 0 10px #06B6D4",
-                    animation: "scanLine 1.5s ease-in-out infinite",
-                    zIndex: 2,
-                  }}
-                />
-              )}
-              <input
-                ref={aadhaarRef}
-                type="file"
-                accept="image/*"
-                style={{ display: "none" }}
-                onChange={handleAadhaarUpload}
-              />
-              {aadhaarPreview ? (
-                <div>
-                  <img
-                    src={aadhaarPreview}
-                    alt="Aadhaar preview"
-                    style={{ maxHeight: 110, maxWidth: "100%", borderRadius: 6, objectFit: "contain" }}
-                  />
-                  <div style={{ fontSize: "0.78rem", color: "#10B981", fontWeight: 700, marginTop: 8 }}>
-                    ✓ Aadhaar Attached ({aadhaarFile?.name})
-                  </div>
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-                  <UploadCloud size={30} color="#0891B2" />
-                  <div style={{ fontSize: "0.86rem", fontWeight: 700, color: "#0F172A" }}>
-                    Upload Aadhaar Card Image
-                  </div>
-                  <div style={{ fontSize: "0.74rem", color: "#94A3B8" }}>Supports JPG, PNG, WebP</div>
-                </div>
-              )}
-            </div>
-
-            {/* PAN Dropzone */}
-            <div
-              style={{
-                border: "2px dashed #CBD5E1",
-                borderRadius: "var(--radius-md)",
-                padding: "20px 16px",
-                textAlign: "center",
-                background: "#F8FAFC",
-                cursor: "pointer",
-                position: "relative",
-                overflow: "hidden",
-                transition: "all 0.2s ease",
-              }}
-              onClick={() => panRef.current?.click()}
-            >
-              {verifying && (
-                <div
-                  style={{
-                    position: "absolute",
-                    left: 0,
-                    right: 0,
-                    height: "3px",
-                    background: "linear-gradient(90deg, transparent, #06B6D4, transparent)",
-                    boxShadow: "0 0 10px #06B6D4",
-                    animation: "scanLine 1.5s ease-in-out infinite",
-                    zIndex: 2,
-                  }}
-                />
-              )}
-              <input
-                ref={panRef}
-                type="file"
-                accept="image/*"
-                style={{ display: "none" }}
-                onChange={handlePanUpload}
-              />
-              {panPreview ? (
-                <div>
-                  <img
-                    src={panPreview}
-                    alt="PAN preview"
-                    style={{ maxHeight: 110, maxWidth: "100%", borderRadius: 6, objectFit: "contain" }}
-                  />
-                  <div style={{ fontSize: "0.78rem", color: "#10B981", fontWeight: 700, marginTop: 8 }}>
-                    ✓ PAN Attached ({panFile?.name})
-                  </div>
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-                  <UploadCloud size={30} color="#0891B2" />
-                  <div style={{ fontSize: "0.86rem", fontWeight: 700, color: "#0F172A" }}>
-                    Upload PAN Card Image
-                  </div>
-                  <div style={{ fontSize: "0.74rem", color: "#94A3B8" }}>Supports JPG, PNG, WebP</div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div style={{ textAlign: "center", marginBottom: 20 }}>
-            <button
-              type="button"
-              className="btn btn-accent"
-              style={{ padding: "12px 26px" }}
-              onClick={runVerification}
-              disabled={verifying || !aadhaarFile || !panFile}
-            >
-              {verifying ? (
-                <>
-                  <RefreshCw size={16} style={{ animation: "spin 0.8s linear infinite" }} /> AI OCR Engine Scanning Credentials...
-                </>
-              ) : (
-                <>
-                  <ShieldCheck size={16} /> Run AI Document Verification
-                </>
-              )}
-            </button>
-          </div>
-
-          {/* Verification Results Comparison */}
-          {verifyResult && (
-            <div
-              style={{
-                background: "#F8FAFC",
-                border: "1px solid #E2E8F0",
-                borderRadius: "var(--radius-md)",
-                padding: "16px 20px",
-                marginBottom: 20,
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                <span style={{ fontSize: "0.92rem", fontWeight: 800, color: "#0F172A" }}>
-                  AI Verification Results
-                </span>
-                <span
-                  className={verifyResult.overall_match ? "badge badge-approved" : "badge badge-rejected"}
-                  style={{ fontSize: "0.78rem" }}
-                >
-                  {verifyResult.overall_match ? "✓ 100% Match Passed" : "✗ Verification Discrepancies"}
+          {/* ────────────────── SECTION 1: AADHAAR CARD ────────────────── */}
+          <div
+            style={{
+              border: aadhaarMatched
+                ? "2px solid #10B981"
+                : aadhaarResult && !aadhaarResult.matched
+                ? "2px solid #EF4444"
+                : "1px solid #E2E8F0",
+              borderRadius: "var(--radius-lg, 12px)",
+              padding: "20px 22px",
+              background: aadhaarMatched ? "#F0FDF4" : "#FFFFFF",
+              marginBottom: 24,
+              boxShadow: aadhaarMatched ? "0 4px 14px rgba(16, 185, 129, 0.08)" : "0 2px 8px rgba(0,0,0,0.03)",
+              transition: "all 0.3s ease",
+            }}
+          >
+            {/* Aadhaar Header */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <CreditCard size={18} color={aadhaarMatched ? "#10B981" : "#0891B2"} />
+                <span style={{ fontSize: "0.95rem", fontWeight: 800, color: "#0F172A" }}>
+                  Aadhaar Card Verification
                 </span>
               </div>
+              <div>
+                {aadhaarVerifying ? (
+                  <span className="badge" style={{ background: "#E0F2FE", color: "#0284C7", display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    <RefreshCw size={12} style={{ animation: "spin 0.8s linear infinite" }} /> AI OCR Scanning...
+                  </span>
+                ) : aadhaarMatched ? (
+                  <span className="badge badge-approved" style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    <CheckCircle size={12} /> Verified
+                  </span>
+                ) : aadhaarResult && !aadhaarResult.matched ? (
+                  <span className="badge badge-rejected" style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    <XCircle size={12} /> Mismatched — Edit to Correct
+                  </span>
+                ) : (
+                  <span className="badge" style={{ background: "#F1F5F9", color: "#64748B" }}>
+                    Step 1
+                  </span>
+                )}
+              </div>
+            </div>
 
-              <FieldRow
-                label="Name Match"
-                userVal={personal.applicant_name}
-                extractedVal={verifyResult.extracted_data?.name || verifyResult.fields?.Name?.extracted_value || "Extracted Name"}
-                match={verifyResult.checks?.name_match ?? verifyResult.fields?.Name?.match ?? Boolean(verifyResult.overall_match)}
-              />
-              <FieldRow
-                label="Aadhaar No."
-                userVal={idFields.user_aadhaar}
-                extractedVal={verifyResult.extracted_data?.aadhaar_number || verifyResult.fields?.["Aadhaar Number"]?.extracted_value || "Extracted Aadhaar"}
-                match={verifyResult.checks?.aadhaar_match ?? verifyResult.fields?.["Aadhaar Number"]?.match ?? Boolean(verifyResult.overall_match)}
-              />
-              <FieldRow
-                label="PAN No."
-                userVal={idFields.user_pan}
-                extractedVal={verifyResult.extracted_data?.pan_number || verifyResult.fields?.["PAN Number"]?.extracted_value || "Extracted PAN"}
-                match={verifyResult.checks?.pan_match ?? verifyResult.fields?.["PAN Number"]?.match ?? Boolean(verifyResult.overall_match)}
-              />
-              {idFields.user_dob && (
-                <FieldRow
-                  label="Date of Birth"
-                  userVal={idFields.user_dob}
-                  extractedVal={verifyResult.extracted_data?.dob || verifyResult.fields?.["Date of Birth"]?.extracted_value || "Extracted DOB"}
-                  match={verifyResult.checks?.dob_match ?? verifyResult.fields?.["Date of Birth"]?.match ?? true}
-                />
-              )}
+            {/* 2-Column Grid: Aadhaar Field + Dropzone Near Each Other */}
+            <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 20, alignItems: "start" }}>
+              {/* Left: Input Field */}
+              <div>
+                <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, fontWeight: 700, fontSize: "0.85rem" }}>
+                  <span>12-Digit Aadhaar Number *</span>
+                  {aadhaarMatched && (
+                    <span className="badge badge-approved" style={{ fontSize: "0.72rem", padding: "2px 8px", display: "flex", alignItems: "center", gap: 4 }}>
+                      <CheckCircle size={11} /> Verified
+                    </span>
+                  )}
+                </label>
+                <div style={{ position: "relative" }}>
+                  <input
+                    className="form-control"
+                    placeholder="Enter 12-digit Aadhaar number"
+                    value={aadhaarMatched ? "•••• •••• ••••" : idFields.user_aadhaar}
+                    onChange={handleAadhaarNumberChange}
+                    disabled={aadhaarMatched}
+                    readOnly={aadhaarMatched}
+                    style={{
+                      paddingRight: aadhaarMatched ? 36 : 12,
+                      backgroundColor: aadhaarMatched ? "#F0FDF4" : aadhaarResult && !aadhaarResult.matched ? "#FEF2F2" : "#FFFFFF",
+                      borderColor: aadhaarMatched ? "#10B981" : aadhaarResult && !aadhaarResult.matched ? "#EF4444" : "#CBD5E1",
+                      color: aadhaarMatched ? "#065F46" : "#0F172A",
+                      fontWeight: aadhaarMatched ? 700 : 500,
+                      cursor: aadhaarMatched ? "not-allowed" : "text",
+                      letterSpacing: aadhaarMatched ? "2px" : "normal",
+                    }}
+                  />
+                  {aadhaarMatched && (
+                    <Lock
+                      size={16}
+                      color="#10B981"
+                      style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)" }}
+                    />
+                  )}
+                </div>
+
+                {/* Status Feedback - Show ONLY Verified Badge */}
+                {aadhaarMatched && (
+                  <div style={{ marginTop: 10 }}>
+                    <span
+                      className="badge badge-approved"
+                      style={{
+                        fontSize: "0.82rem",
+                        padding: "6px 14px",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        fontWeight: 700,
+                      }}
+                    >
+                      <CheckCircle size={14} /> Verified
+                    </span>
+                  </div>
+                )}
+
+                {aadhaarResult && !aadhaarResult.matched && (
+                  <div style={{ marginTop: 10, padding: "8px 12px", background: "#FEE2E2", borderRadius: 8, fontSize: "0.78rem", color: "#991B1B" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700, marginBottom: 2 }}>
+                      <AlertCircle size={15} color="#DC2626" />
+                      <span>Value Mismatched — Field Remains Editable</span>
+                    </div>
+                    <div>
+                      Aadhaar card details do not match entered number. Please check the number or upload a clearer card image.
+                    </div>
+                  </div>
+                )}
+
+                {!aadhaarResult && aadhaarFile && (
+                  <div style={{ marginTop: 8, fontSize: "0.76rem", color: "#64748B" }}>
+                    Image attached. Type 12 digits to auto-run AI matching.
+                  </div>
+                )}
+              </div>
+
+              {/* Right: Dropzone Near Field */}
+              <div>
+                <div
+                  style={{
+                    border: aadhaarMatched ? "2px solid #10B981" : "2px dashed #CBD5E1",
+                    borderRadius: "var(--radius-md, 8px)",
+                    padding: "16px 14px",
+                    textAlign: "center",
+                    background: aadhaarMatched ? "#ECFDF5" : "#F8FAFC",
+                    cursor: aadhaarMatched ? "default" : "pointer",
+                    position: "relative",
+                    overflow: "hidden",
+                    minHeight: 120,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "all 0.2s ease",
+                  }}
+                  onClick={() => {
+                    if (!aadhaarMatched) aadhaarRef.current?.click();
+                  }}
+                >
+                  {aadhaarVerifying && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        left: 0,
+                        right: 0,
+                        height: "3px",
+                        background: "linear-gradient(90deg, transparent, #06B6D4, transparent)",
+                        boxShadow: "0 0 10px #06B6D4",
+                        animation: "scanLine 1.5s ease-in-out infinite",
+                        zIndex: 2,
+                      }}
+                    />
+                  )}
+                  <input
+                    ref={aadhaarRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: "none" }}
+                    onChange={handleAadhaarUpload}
+                    disabled={aadhaarMatched}
+                  />
+                  {aadhaarPreview ? (
+                    <div>
+                      <img
+                        src={aadhaarPreview}
+                        alt="Aadhaar preview"
+                        style={{ maxHeight: 90, maxWidth: "100%", borderRadius: 6, objectFit: "contain" }}
+                      />
+                      <div style={{ fontSize: "0.76rem", color: aadhaarMatched ? "#10B981" : "#0F172A", fontWeight: 700, marginTop: 6 }}>
+                        {aadhaarMatched ? "✓ Verified" : "✓ Attached"} ({aadhaarFile?.name})
+                      </div>
+                      {!aadhaarMatched && (
+                        <div style={{ fontSize: "0.7rem", color: "#64748B", marginTop: 2 }}>
+                          Click to upload a different image
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                      <UploadCloud size={26} color="#0891B2" />
+                      <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "#0F172A" }}>
+                        Upload Aadhaar Card Image
+                      </div>
+                      <div style={{ fontSize: "0.7rem", color: "#94A3B8" }}>Auto-scans upon upload</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ────────────────── SECTION 2: PAN CARD ────────────────── */}
+          <div
+            style={{
+              border: panMatched
+                ? "2px solid #10B981"
+                : panResult && !panResult.matched
+                ? "2px solid #EF4444"
+                : "1px solid #E2E8F0",
+              borderRadius: "var(--radius-lg, 12px)",
+              padding: "20px 22px",
+              background: panMatched ? "#F0FDF4" : !aadhaarMatched ? "#F8FAFC" : "#FFFFFF",
+              marginBottom: 24,
+              boxShadow: panMatched ? "0 4px 14px rgba(16, 185, 129, 0.08)" : "0 2px 8px rgba(0,0,0,0.03)",
+              opacity: !aadhaarMatched ? 0.65 : 1,
+              transition: "all 0.3s ease",
+              position: "relative",
+            }}
+          >
+            {/* Overlay if Aadhaar is not matched */}
+            {!aadhaarMatched && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  background: "rgba(248, 250, 252, 0.75)",
+                  borderRadius: "var(--radius-lg, 12px)",
+                  zIndex: 10,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backdropFilter: "blur(1px)",
+                }}
+              >
+                <div
+                  style={{
+                    background: "#FFFFFF",
+                    padding: "10px 18px",
+                    borderRadius: 20,
+                    boxShadow: "0 4px 14px rgba(0,0,0,0.08)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontSize: "0.85rem",
+                    fontWeight: 700,
+                    color: "#475569",
+                  }}
+                >
+                  <Lock size={15} color="#64748B" /> Complete Aadhaar Verification first to unlock PAN field
+                </div>
+              </div>
+            )}
+
+            {/* PAN Header */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <CreditCard size={18} color={panMatched ? "#10B981" : "#0891B2"} />
+                <span style={{ fontSize: "0.95rem", fontWeight: 800, color: "#0F172A" }}>
+                  PAN Card Verification
+                </span>
+              </div>
+              <div>
+                {!aadhaarMatched ? (
+                  <span className="badge" style={{ background: "#F1F5F9", color: "#94A3B8", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <Lock size={12} /> Locked
+                  </span>
+                ) : panVerifying ? (
+                  <span className="badge" style={{ background: "#E0F2FE", color: "#0284C7", display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    <RefreshCw size={12} style={{ animation: "spin 0.8s linear infinite" }} /> AI OCR Scanning...
+                  </span>
+                ) : panMatched ? (
+                  <span className="badge badge-approved" style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    <CheckCircle size={12} /> Verified
+                  </span>
+                ) : panResult && !panResult.matched ? (
+                  <span className="badge badge-rejected" style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    <XCircle size={12} /> Mismatched — Edit to Correct
+                  </span>
+                ) : (
+                  <span className="badge" style={{ background: "#F1F5F9", color: "#64748B" }}>
+                    Step 2
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* 2-Column Grid: PAN Field + Dropzone Near Each Other */}
+            <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 20, alignItems: "start" }}>
+              {/* Left: Input Field */}
+              <div>
+                <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, fontWeight: 700, fontSize: "0.85rem" }}>
+                  <span>10-Character PAN Number *</span>
+                  {panMatched && (
+                    <span className="badge badge-approved" style={{ fontSize: "0.72rem", padding: "2px 8px", display: "flex", alignItems: "center", gap: 4 }}>
+                      <CheckCircle size={11} /> Verified
+                    </span>
+                  )}
+                </label>
+                <div style={{ position: "relative" }}>
+                  <input
+                    className="form-control"
+                    placeholder="Enter 10-character PAN number"
+                    value={panMatched ? "••••••••••" : idFields.user_pan}
+                    onChange={handlePanNumberChange}
+                    disabled={!aadhaarMatched || panMatched}
+                    readOnly={panMatched}
+                    style={{
+                      paddingRight: panMatched ? 36 : 12,
+                      backgroundColor: panMatched ? "#F0FDF4" : panResult && !panResult.matched ? "#FEF2F2" : (!aadhaarMatched ? "#F1F5F9" : "#FFFFFF"),
+                      borderColor: panMatched ? "#10B981" : panResult && !panResult.matched ? "#EF4444" : "#CBD5E1",
+                      color: panMatched ? "#065F46" : "#0F172A",
+                      fontWeight: panMatched ? 700 : 500,
+                      cursor: panMatched || !aadhaarMatched ? "not-allowed" : "text",
+                      letterSpacing: panMatched ? "2px" : "normal",
+                    }}
+                  />
+                  {panMatched && (
+                    <Lock
+                      size={16}
+                      color="#10B981"
+                      style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)" }}
+                    />
+                  )}
+                </div>
+
+                {/* Status Feedback - Show ONLY Verified Badge */}
+                {panMatched && (
+                  <div style={{ marginTop: 10 }}>
+                    <span
+                      className="badge badge-approved"
+                      style={{
+                        fontSize: "0.82rem",
+                        padding: "6px 14px",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        fontWeight: 700,
+                      }}
+                    >
+                      <CheckCircle size={14} /> Verified
+                    </span>
+                  </div>
+                )}
+
+                {panResult && !panResult.matched && (
+                  <div style={{ marginTop: 10, padding: "8px 12px", background: "#FEE2E2", borderRadius: 8, fontSize: "0.78rem", color: "#991B1B" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700, marginBottom: 2 }}>
+                      <AlertCircle size={15} color="#DC2626" />
+                      <span>Value Mismatched — Field Remains Editable</span>
+                    </div>
+                    <div>
+                      PAN card details do not match entered number. Please check the number or upload a clearer card image.
+                    </div>
+                  </div>
+                )}
+
+                {!panResult && panFile && aadhaarMatched && (
+                  <div style={{ marginTop: 8, fontSize: "0.76rem", color: "#64748B" }}>
+                    Image attached. Type 10 characters to auto-run AI matching.
+                  </div>
+                )}
+              </div>
+
+              {/* Right: Dropzone Near Field */}
+              <div>
+                <div
+                  style={{
+                    border: panMatched ? "2px solid #10B981" : "2px dashed #CBD5E1",
+                    borderRadius: "var(--radius-md, 8px)",
+                    padding: "16px 14px",
+                    textAlign: "center",
+                    background: panMatched ? "#ECFDF5" : "#F8FAFC",
+                    cursor: panMatched || !aadhaarMatched ? "default" : "pointer",
+                    position: "relative",
+                    overflow: "hidden",
+                    minHeight: 120,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "all 0.2s ease",
+                  }}
+                  onClick={() => {
+                    if (aadhaarMatched && !panMatched) panRef.current?.click();
+                  }}
+                >
+                  {panVerifying && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        left: 0,
+                        right: 0,
+                        height: "3px",
+                        background: "linear-gradient(90deg, transparent, #06B6D4, transparent)",
+                        boxShadow: "0 0 10px #06B6D4",
+                        animation: "scanLine 1.5s ease-in-out infinite",
+                        zIndex: 2,
+                      }}
+                    />
+                  )}
+                  <input
+                    ref={panRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: "none" }}
+                    onChange={handlePanUpload}
+                    disabled={!aadhaarMatched || panMatched}
+                  />
+                  {panPreview ? (
+                    <div>
+                      <img
+                        src={panPreview}
+                        alt="PAN preview"
+                        style={{ maxHeight: 90, maxWidth: "100%", borderRadius: 6, objectFit: "contain" }}
+                      />
+                      <div style={{ fontSize: "0.76rem", color: panMatched ? "#10B981" : "#0F172A", fontWeight: 700, marginTop: 6 }}>
+                        {panMatched ? "✓ Verified" : "✓ Attached"} ({panFile?.name})
+                      </div>
+                      {aadhaarMatched && !panMatched && (
+                        <div style={{ fontSize: "0.7rem", color: "#64748B", marginTop: 2 }}>
+                          Click to upload a different image
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                      <UploadCloud size={26} color="#0891B2" />
+                      <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "#0F172A" }}>
+                        Upload PAN Card Image
+                      </div>
+                      <div style={{ fontSize: "0.7rem", color: "#94A3B8" }}>Auto-scans upon upload</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Both Matched Success Summary */}
+          {aadhaarMatched && panMatched && (
+            <div
+              style={{
+                background: "#ECFDF5",
+                border: "1px solid #A7F3D0",
+                borderRadius: "var(--radius-md, 8px)",
+                padding: "14px 18px",
+                marginBottom: 20,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                flexWrap: "wrap",
+                gap: 10,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <CheckCircle size={20} color="#10B981" />
+                <div>
+                  <div style={{ fontSize: "0.88rem", fontWeight: 800, color: "#065F46" }}>
+                    KYC Verification Complete
+                  </div>
+                  <div style={{ fontSize: "0.78rem", color: "#047857" }}>
+                    Both Aadhaar and PAN documents have been authenticated successfully.
+                  </div>
+                </div>
+              </div>
+              <span className="badge badge-approved" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                <CheckCircle size={13} /> Verified
+              </span>
             </div>
           )}
 
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 24 }}>
+          {/* Navigation Buttons */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 24 }}>
             <button className="btn btn-ghost" onClick={handleBack}>
               <ArrowLeft size={15} /> Back
             </button>
-            <button className="btn btn-primary" onClick={handleNext}>
-              Next: Upload {loan.loan_type} Documents <ArrowRight size={15} />
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              {(!aadhaarMatched || !panMatched) && (
+                <span style={{ fontSize: "0.78rem", color: "#64748B" }}>
+                  Match {!aadhaarMatched ? "Aadhaar" : "PAN"} to proceed
+                </span>
+              )}
+              <button
+                className="btn btn-primary"
+                onClick={handleNext}
+                disabled={!aadhaarMatched || !panMatched}
+              >
+                Next: Upload {loan.loan_type} Documents <ArrowRight size={15} />
+              </button>
+            </div>
           </div>
         </div>
       )}

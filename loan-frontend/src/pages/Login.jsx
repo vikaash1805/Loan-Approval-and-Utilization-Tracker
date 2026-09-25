@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api/loanApi";
@@ -12,6 +12,7 @@ import {
   AlertTriangle,
   CheckCircle,
   RefreshCw,
+  Key,
 } from "lucide-react";
 import fundmatrixLogo from "../assets/fundmatrix_logo.png";
 
@@ -31,11 +32,39 @@ export default function Login() {
   const [regPhone, setRegPhone] = useState("");
   const [regPassword, setRegPassword] = useState("");
   const [regConfirmPassword, setRegConfirmPassword] = useState("");
+  const [regStep, setRegStep] = useState(1); // 1 = Details, 2 = In-Page Email OTP Verification
+
+  // OTP Verification State (Registration)
+  const [otpValue, setOtpValue] = useState("");
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [otpError, setOtpError] = useState("");
+  const [otpSuccess, setOtpSuccess] = useState("");
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  // Forgot Password Modal State
+  const [showForgotModal, setShowForgotModal] = useState(false);
+  const [forgotStep, setForgotStep] = useState(1); // 1 = enter email, 2 = enter OTP & new password
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotOtp, setForgotOtp] = useState("");
+  const [forgotNewPassword, setForgotNewPassword] = useState("");
+  const [forgotConfirmPassword, setForgotConfirmPassword] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotError, setForgotError] = useState("");
+  const [forgotSuccess, setForgotSuccess] = useState("");
 
   // Status indicators
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+
+  // Resend OTP Countdown Timer
+  useEffect(() => {
+    let timer;
+    if (resendCooldown > 0) {
+      timer = setInterval(() => setResendCooldown((prev) => prev - 1), 1000);
+    }
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
 
   // Handle standard login
   const handleLoginSubmit = async (e) => {
@@ -43,8 +72,8 @@ export default function Login() {
     setError("");
     setSuccessMsg("");
 
-    if (!email.trim()) {
-      setError("Please enter your email address.");
+    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError("Please enter a valid email address.");
       return;
     }
     if (!password) {
@@ -90,10 +119,11 @@ export default function Login() {
       }
 
       const userData = authRes?.user || {};
+      const targetRole = role === "officer" ? "officer" : (userData.role || role);
       const loggedInUser = login(
-        userData.role || role,
+        targetRole,
         userData.email || email.trim(),
-        userData.name || (localUser?.name || ""),
+        userData.name || (localUser?.name || (targetRole === "officer" ? "Senior Underwriting Officer" : "")),
         userData.phone || (localUser?.phone || ""),
         {
           id_type: userData.id_type || localUser?.id_type,
@@ -102,8 +132,8 @@ export default function Login() {
         }
       );
 
-      if (loggedInUser.role === "officer") {
-        navigate("/");
+      if (targetRole === "officer") {
+        navigate("/approvals");
       } else {
         navigate("/apply");
       }
@@ -120,16 +150,22 @@ export default function Login() {
     setError("");
     setSuccessMsg("");
 
-    if (!regName.trim()) {
-      setError("Please provide your full legal name.");
+    const nameTrimmed = regName.trim();
+    if (!nameTrimmed || nameTrimmed.length < 2) {
+      setError("Please provide your full legal name (at least 2 characters).");
       return;
     }
-    if (!regEmail.trim() || !/\S+@\S+\.\S+/.test(regEmail)) {
+    if (!/^[A-Za-z\s.'-]+$/.test(nameTrimmed)) {
+      setError("Legal name should contain only alphabetic letters.");
+      return;
+    }
+    if (!regEmail.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(regEmail.trim())) {
       setError("Please provide a valid email address.");
       return;
     }
-    if (!regPhone.trim() || regPhone.length < 7) {
-      setError("Please enter a valid phone number.");
+    const cleanPhone = regPhone.replace(/\D/g, "");
+    if (cleanPhone.length !== 10 || !/^[6-9]/.test(cleanPhone)) {
+      setError("Please enter a valid 10-digit Indian mobile number (e.g. 9876543210).");
       return;
     }
     if (!regPassword || regPassword.length < 6) {
@@ -145,29 +181,140 @@ export default function Login() {
 
     try {
       const payload = {
-        name: regName.trim(),
+        name: nameTrimmed,
         email: regEmail.trim().toLowerCase(),
-        phone: regPhone.trim(),
+        phone: cleanPhone,
         password: regPassword,
         role: "user",
       };
 
-      try {
-        await api.registerUser(payload);
-      } catch (apiRegErr) {
-        // Fallback to local storage persistence
-      }
+      const res = await api.sendOtp(payload);
+      setRegStep(2); // Seamless in-page OTP verification step
+      setOtpValue("");
+      setOtpError("");
+      setOtpSuccess(res.message || `A 6-digit verification code was sent to ${payload.email}.`);
+      setResendCooldown(60);
+    } catch (err) {
+      setError(err.message || "Failed to dispatch verification code. Please check your information.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
-      register("user", payload.email, payload.name, payload.phone, payload.password);
+  // Handle OTP verification for Registration
+  const handleVerifyOtpSubmit = async (e) => {
+    e?.preventDefault();
+    setOtpError("");
+    setOtpSuccess("");
 
-      setSuccessMsg("Account created successfully! Redirecting to loan application...");
+    const cleanOtp = otpValue.trim();
+    if (!cleanOtp || cleanOtp.length !== 6 || !/^\d{6}$/.test(cleanOtp)) {
+      setOtpError("Please enter all 6 digits of the verification code.");
+      return;
+    }
+
+    setOtpLoading(true);
+    try {
+      const emailNorm = regEmail.trim().toLowerCase();
+      await api.verifyOtp({
+        email: emailNorm,
+        otp: cleanOtp,
+      });
+
+      setOtpSuccess("✓ Email verified successfully! Redirecting to loan application...");
+      register("user", emailNorm, regName.trim(), regPhone.trim(), regPassword);
+
       setTimeout(() => {
         navigate("/apply");
       }, 1000);
     } catch (err) {
-      setError(err.message || "Registration failed. Please review your information.");
+      setOtpError(err.message || "Verification failed. Please check the code and try again.");
     } finally {
-      setLoading(false);
+      setOtpLoading(false);
+    }
+  };
+
+  // Resend OTP handler for Registration
+  const handleResendOtp = async () => {
+    if (resendCooldown > 0 || otpLoading) return;
+    setOtpError("");
+    setOtpSuccess("");
+    setOtpLoading(true);
+    try {
+      const payload = {
+        name: regName.trim(),
+        email: regEmail.trim().toLowerCase(),
+        phone: regPhone.replace(/\D/g, ""),
+        password: regPassword,
+        role: "user",
+      };
+      const res = await api.sendOtp(payload);
+      setOtpSuccess("✓ A fresh 6-digit verification code has been dispatched!");
+      setResendCooldown(60);
+    } catch (err) {
+      setOtpError(err.message || "Failed to resend verification code.");
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
+  // Forgot password handlers
+  const handleForgotSendOtp = async (e) => {
+    e?.preventDefault();
+    setForgotError("");
+    setForgotSuccess("");
+    const cleanMail = forgotEmail.trim().toLowerCase();
+    if (!cleanMail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanMail)) {
+      setForgotError("Please enter a valid email address.");
+      return;
+    }
+    setForgotLoading(true);
+    try {
+      const res = await api.forgotPassword({ email: cleanMail });
+      setForgotSuccess(res.message || "Verification code dispatched to your email.");
+      setForgotStep(2);
+    } catch (err) {
+      setForgotError(err.message || "Failed to dispatch reset code.");
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  const handleForgotResetSubmit = async (e) => {
+    e?.preventDefault();
+    setForgotError("");
+    setForgotSuccess("");
+    if (!forgotOtp || forgotOtp.trim().length !== 6) {
+      setForgotError("Please enter the 6-digit verification code.");
+      return;
+    }
+    if (!forgotNewPassword || forgotNewPassword.length < 6) {
+      setForgotError("Password must be at least 6 characters.");
+      return;
+    }
+    if (forgotNewPassword !== forgotConfirmPassword) {
+      setForgotError("Passwords do not match.");
+      return;
+    }
+    setForgotLoading(true);
+    try {
+      await api.resetPassword({
+        email: forgotEmail.trim().toLowerCase(),
+        otp_code: forgotOtp.trim(),
+        new_password: forgotNewPassword,
+      });
+      setForgotSuccess("Password reset successfully! Redirecting to sign in...");
+      setTimeout(() => {
+        setShowForgotModal(false);
+        setSuccessMsg("Password reset successfully! You can now sign in with your new password.");
+        setEmail(forgotEmail.trim().toLowerCase());
+        setPassword("");
+        setForgotStep(1);
+      }, 1400);
+    } catch (err) {
+      setForgotError(err.message || "Failed to reset password.");
+    } finally {
+      setForgotLoading(false);
     }
   };
 
@@ -291,6 +438,7 @@ export default function Login() {
             type="button"
             onClick={() => {
               setIsRegister(true);
+              setRegStep(1);
               setError("");
               setSuccessMsg("");
               setRole("user");
@@ -361,6 +509,7 @@ export default function Login() {
                 <ShieldCheck size={15} /> Loan Officer
               </button>
             </div>
+
           </div>
         )}
 
@@ -410,6 +559,27 @@ export default function Login() {
             <div className="form-group">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <label>Password</label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setForgotEmail(email);
+                    setForgotStep(1);
+                    setForgotError("");
+                    setForgotSuccess("");
+                    setShowForgotModal(true);
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#2563EB",
+                    fontSize: "0.78rem",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    padding: 0,
+                  }}
+                >
+                  Forgot password?
+                </button>
               </div>
               <div style={{ position: "relative" }}>
                 <Lock
@@ -451,9 +621,19 @@ export default function Login() {
               )}
             </button>
           </form>
-        ) : (
-          /* ─── Form 2: REGISTRATION ───────────────────────────────────────────────── */
+        ) : regStep === 1 ? (
+          /* ─── Form 2A: REGISTRATION STEP 1 (DETAILS) ───────────────────────────────── */
           <form onSubmit={handleRegisterSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {/* Step progress pills */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+              <div style={{ flex: 1, height: 4, borderRadius: 2, background: "#06B6D4" }} />
+              <div style={{ flex: 1, height: 4, borderRadius: 2, background: "#E2E8F0" }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.74rem", color: "#64748B", marginBottom: 6 }}>
+              <span style={{ color: "#0891B2", fontWeight: 800 }}>Step 1: Account Information</span>
+              <span>Step 2: Email OTP</span>
+            </div>
+
             <div className="form-group">
               <label>Full Legal Name *</label>
               <div style={{ position: "relative" }}>
@@ -588,17 +768,338 @@ export default function Login() {
               {loading ? (
                 <>
                   <RefreshCw size={16} style={{ animation: "spin 0.8s linear infinite" }} />
-                  Creating Account...
+                  Sending Verification Code...
                 </>
               ) : (
                 <>
-                  <ShieldCheck size={17} /> Create Account
+                  <Mail size={17} /> Verify Email & Continue <ArrowRight size={16} />
                 </>
               )}
             </button>
           </form>
+        ) : (
+          /* ─── Form 2B: REGISTRATION STEP 2 (IN-PAGE EMAIL OTP VERIFICATION) ───────── */
+          <form onSubmit={handleVerifyOtpSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {/* Step progress pills */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+              <div style={{ flex: 1, height: 4, borderRadius: 2, background: "#10B981" }} />
+              <div style={{ flex: 1, height: 4, borderRadius: 2, background: "#06B6D4" }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.74rem", color: "#64748B", marginBottom: 8 }}>
+              <span style={{ color: "#10B981", fontWeight: 700 }}>✓ Step 1: Details</span>
+              <span style={{ color: "#0891B2", fontWeight: 800 }}>Step 2: Email OTP Verification</span>
+            </div>
+
+            <div style={{ textAlign: "center", padding: "6px 0 2px" }}>
+              <div
+                style={{
+                  width: 52,
+                  height: 52,
+                  borderRadius: "50%",
+                  background: "#EFF6FF",
+                  color: "#2563EB",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  margin: "0 auto 10px",
+                }}
+              >
+                <Mail size={26} />
+              </div>
+              <h3 style={{ fontSize: "1.2rem", fontWeight: 800, color: "#0F172A", margin: "0 0 6px" }}>
+                Verify Your Email Address
+              </h3>
+              <p style={{ fontSize: "0.82rem", color: "#64748B", margin: 0, lineHeight: 1.5 }}>
+                Enter the 6-digit one-time passcode sent to:
+                <br />
+                <strong style={{ color: "#0F172A" }}>{regEmail.toLowerCase()}</strong>{" "}
+                <button
+                  type="button"
+                  onClick={() => { setRegStep(1); setOtpError(""); }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#2563EB",
+                    fontSize: "0.78rem",
+                    textDecoration: "underline",
+                    cursor: "pointer",
+                    padding: 0,
+                  }}
+                >
+                  (change email)
+                </button>
+              </p>
+            </div>
+
+
+
+            {otpError && (
+              <div className="alert alert-error" style={{ fontSize: "0.82rem", padding: "10px" }}>
+                {otpError}
+              </div>
+            )}
+
+            {otpSuccess && (
+              <div className="alert alert-success" style={{ fontSize: "0.82rem", padding: "10px" }}>
+                {otpSuccess}
+              </div>
+            )}
+
+            <div className="form-group" style={{ marginBottom: 2 }}>
+              <label style={{ textAlign: "center", display: "block", marginBottom: 6, fontWeight: 700 }}>
+                6-Digit Email Verification Code
+              </label>
+              <input
+                type="text"
+                maxLength={6}
+                inputMode="numeric"
+                placeholder="• • • • • •"
+                value={otpValue}
+                onChange={(e) => setOtpValue(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                style={{
+                  fontSize: "2rem",
+                  letterSpacing: "12px",
+                  textAlign: "center",
+                  fontWeight: 800,
+                  color: "#0F172A",
+                  fontFamily: "monospace",
+                  height: 56,
+                  borderRadius: 10,
+                  border: "2px solid #CBD5E1",
+                  background: "#F8FAFC",
+                  width: "100%",
+                }}
+                autoFocus
+                disabled={otpLoading}
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="btn btn-accent btn-lg"
+              style={{ width: "100%", marginTop: 2 }}
+              disabled={otpLoading || otpValue.length !== 6}
+            >
+              {otpLoading ? (
+                <>
+                  <RefreshCw size={16} style={{ animation: "spin 0.8s linear infinite" }} />
+                  Verifying Code...
+                </>
+              ) : (
+                <>
+                  <ShieldCheck size={18} /> Verify & Complete Registration
+                </>
+              )}
+            </button>
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={handleResendOtp}
+                disabled={resendCooldown > 0 || otpLoading}
+                style={{ fontSize: "0.8rem", color: resendCooldown > 0 ? "#94A3B8" : "#2563EB" }}
+              >
+                {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : "Resend Code"}
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => { setRegStep(1); setOtpError(""); }}
+                disabled={otpLoading}
+                style={{ fontSize: "0.8rem", color: "#64748B" }}
+              >
+                ← Back to Edit Info
+              </button>
+            </div>
+          </form>
         )}
       </div>
+
+
+
+      {/* Forgot Password Modal */}
+      {showForgotModal && (
+        <div className="modal-overlay" style={{ zIndex: 1200 }}>
+          <div
+            className="modal"
+            style={{
+              maxWidth: 440,
+              width: "90vw",
+              padding: "32px 28px",
+            }}
+          >
+            <div style={{ textAlign: "center", marginBottom: 16 }}>
+              <div
+                style={{
+                  width: 52,
+                  height: 52,
+                  borderRadius: "50%",
+                  background: "#EFF6FF",
+                  color: "#2563EB",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  margin: "0 auto 12px",
+                }}
+              >
+                <Key size={26} />
+              </div>
+              <h3 style={{ fontSize: "1.25rem", fontWeight: 800, color: "#0F172A", margin: 0 }}>
+                Reset Your Password
+              </h3>
+              <p style={{ fontSize: "0.82rem", color: "#64748B", marginTop: 6 }}>
+                {forgotStep === 1
+                  ? "Enter your account email to receive a 6-digit verification code."
+                  : `Enter the 6-digit code sent to ${forgotEmail} and choose a new password.`}
+              </p>
+            </div>
+
+
+
+            {forgotError && (
+              <div className="alert alert-error" style={{ fontSize: "0.82rem", marginBottom: 14, padding: "10px" }}>
+                {forgotError}
+              </div>
+            )}
+
+            {forgotSuccess && (
+              <div className="alert alert-success" style={{ fontSize: "0.82rem", marginBottom: 14, padding: "10px" }}>
+                {forgotSuccess}
+              </div>
+            )}
+
+            {forgotStep === 1 ? (
+              <form onSubmit={handleForgotSendOtp} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <div className="form-group">
+                  <label>Account Email</label>
+                  <div style={{ position: "relative" }}>
+                    <Mail
+                      size={16}
+                      style={{
+                        position: "absolute",
+                        left: 12,
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        color: "#64748B",
+                      }}
+                    />
+                    <input
+                      className="form-control"
+                      style={{ paddingLeft: 36 }}
+                      type="email"
+                      placeholder="name@domain.com"
+                      value={forgotEmail}
+                      onChange={(e) => setForgotEmail(e.target.value)}
+                      disabled={forgotLoading}
+                      autoFocus
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ flex: 1 }}
+                    onClick={() => setShowForgotModal(false)}
+                    disabled={forgotLoading}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    style={{ flex: 2 }}
+                    disabled={forgotLoading}
+                  >
+                    {forgotLoading ? (
+                      <>
+                        <RefreshCw size={14} style={{ animation: "spin 0.8s linear infinite" }} /> Sending...
+                      </>
+                    ) : (
+                      "Send Verification Code"
+                    )}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleForgotResetSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div className="form-group">
+                  <label>6-Digit Verification Code</label>
+                  <input
+                    className="form-control"
+                    style={{
+                      letterSpacing: 8,
+                      textAlign: "center",
+                      fontWeight: 800,
+                      fontSize: "1.3rem",
+                      fontFamily: "monospace",
+                    }}
+                    maxLength={6}
+                    placeholder="••••••"
+                    value={forgotOtp}
+                    onChange={(e) => setForgotOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    disabled={forgotLoading}
+                    autoFocus
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>New Password (min 6 characters)</label>
+                  <input
+                    className="form-control"
+                    type="password"
+                    placeholder="New password"
+                    value={forgotNewPassword}
+                    onChange={(e) => setForgotNewPassword(e.target.value)}
+                    disabled={forgotLoading}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Confirm New Password</label>
+                  <input
+                    className="form-control"
+                    type="password"
+                    placeholder="Confirm new password"
+                    value={forgotConfirmPassword}
+                    onChange={(e) => setForgotConfirmPassword(e.target.value)}
+                    disabled={forgotLoading}
+                  />
+                </div>
+
+                <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ flex: 1 }}
+                    onClick={() => setForgotStep(1)}
+                    disabled={forgotLoading}
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-accent"
+                    style={{ flex: 2 }}
+                    disabled={forgotLoading}
+                  >
+                    {forgotLoading ? (
+                      <>
+                        <RefreshCw size={14} style={{ animation: "spin 0.8s linear infinite" }} /> Updating...
+                      </>
+                    ) : (
+                      "Update Password"
+                    )}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

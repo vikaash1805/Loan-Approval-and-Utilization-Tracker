@@ -2,21 +2,64 @@ const BASE = "http://localhost:5000/loan";
 const FLASK = "http://localhost:5000";
 
 const request = async (url, opts = {}) => {
-  const res = await fetch(url, {
-    headers: { "Content-Type": "application/json" },
-    ...opts,
-  });
-  const data = await res.json();
-  if (!data.success && !res.ok) throw new Error(data.error || "API error");
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: { "Content-Type": "application/json" },
+      ...opts,
+    });
+  } catch (netErr) {
+    throw new Error(
+      netErr.message?.includes("Failed to fetch")
+        ? "Unable to connect to backend server. Please verify the server is running."
+        : netErr.message || "Network request failed"
+    );
+  }
+
+  let data;
+  try {
+    data = await res.json();
+  } catch (_) {
+    throw new Error(`Server returned non-JSON response (${res.status} ${res.statusText})`);
+  }
+
+  if (!res.ok || data?.success === false) {
+    const errorMsg =
+      (typeof data?.error === "object" ? data.error?.message || JSON.stringify(data.error) : data?.error) ||
+      data?.message ||
+      `Request failed with status ${res.status}`;
+    throw new Error(errorMsg);
+  }
   return data;
 };
 
 export const api = {
+  sendOtp: (body) =>
+    request(`${BASE}/auth/send-otp`, { method: "POST", body: JSON.stringify(body) }),
+
+  verifyOtp: (body) =>
+    request(`${BASE}/auth/verify-otp`, { method: "POST", body: JSON.stringify(body) }),
+
+  sendLoginOtp: (body) =>
+    request(`${BASE}/auth/send-login-otp`, { method: "POST", body: JSON.stringify(body) }),
+
+  verifyLoginOtp: (body) =>
+    request(`${BASE}/auth/verify-login-otp`, { method: "POST", body: JSON.stringify(body) }),
+
+  forgotPassword: (body) =>
+    request(`${BASE}/auth/forgot-password`, { method: "POST", body: JSON.stringify(body) }),
+
+  resetPassword: (body) =>
+    request(`${BASE}/auth/reset-password`, { method: "POST", body: JSON.stringify(body) }),
+
   registerUser: (body) =>
     request(`${BASE}/auth/register`, { method: "POST", body: JSON.stringify(body) }),
 
   loginUser: (body) =>
     request(`${BASE}/auth/login`, { method: "POST", body: JSON.stringify(body) }),
+
+  getAuthProfile: (email) =>
+    request(`${BASE}/auth/me?email=${encodeURIComponent(email)}`),
 
   getDashboard: (params = {}) => {
     const q = new URLSearchParams(

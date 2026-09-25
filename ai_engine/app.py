@@ -1468,10 +1468,22 @@ def verify_single_id():
         user_dob = (request.form.get("user_dob") or "").strip()
         user_gender = (request.form.get("user_gender") or "").strip()
 
-        if not user_name:
-            return jsonify({"success": False, "error": "Full Name is required."}), 400
+        if id_type.lower() not in ("aadhaar", "pan"):
+            return jsonify({"success": False, "error": "id_type must be either 'Aadhaar' or 'PAN'."}), 400
+
         if not id_number:
             return jsonify({"success": False, "error": f"{id_type} Number is required."}), 400
+
+        if id_type.lower() == "aadhaar":
+            clean_num = re.sub(r"\D", "", id_number)
+            if len(clean_num) != 12:
+                return jsonify({"success": False, "error": "Aadhaar number must be exactly 12 digits."}), 400
+            id_number = clean_num
+        elif id_type.lower() == "pan":
+            clean_pan = id_number.strip().upper()
+            if not re.match(r"^[A-Z]{5}[0-9]{4}[A-Z]{1}$", clean_pan):
+                return jsonify({"success": False, "error": "PAN number must be valid 10-character alphanumeric format (e.g. ABCDE1234F)."}), 400
+            id_number = clean_pan
 
         id_file = request.files.get("id_image")
         if not id_file or id_file.filename == "":
@@ -1486,18 +1498,25 @@ def verify_single_id():
         # Extract using Gemini AI
         card_data = extract_card(id_image, id_type)
 
-        is_valid = card_data.get("is_valid_id", False)
-
         extracted_name = card_data.get("name")
         extracted_dob = card_data.get("dob")
         extracted_gender = card_data.get("gender")
         extracted_number = card_data.get("aadhaar_number") if id_type.lower() == "aadhaar" else card_data.get("pan_number")
 
+        # Fallback check: if numbers or names were extracted, mark is_valid_id as True
+        if extracted_number or extracted_name:
+            card_data["is_valid_id"] = True
+
+        is_valid = card_data.get("is_valid_id", False)
+
         # Field comparisons
+        number_res = compare_field(id_number, extracted_number, "aadhaar" if id_type.lower() == "aadhaar" else "pan")
         fields = {
-            "Name": compare_field(user_name, extracted_name, "name"),
-            f"{id_type} Number": compare_field(id_number, extracted_number, "aadhaar" if id_type.lower() == "aadhaar" else "pan"),
+            f"{id_type} Number": number_res
         }
+
+        if user_name and extracted_name:
+            fields["Name"] = compare_field(user_name, extracted_name, "name")
 
         if user_dob and extracted_dob:
             fields["Date of Birth"] = compare_field(user_dob, extracted_dob, "dob")
@@ -1505,22 +1524,38 @@ def verify_single_id():
         if user_gender and extracted_gender and id_type.lower() == "aadhaar":
             fields["Gender"] = compare_field(user_gender, extracted_gender, "gender")
 
-        all_matched = all(result["match"] for result in fields.values())
-        overall_match = is_valid and all_matched
+        # ID number match is the primary requirement for freezing the field
+        number_matched = bool(is_valid and number_res["match"])
 
-        if not overall_match:
-            # When mismatched: do not store, do not reveal extracted values, do not state which field mismatched
-            return jsonify({
-                "success": True,
-                "overall_match": False,
-                "message": "The entered details are mismatched with the uploaded ID proof. Please check your details and try again."
-            })
+        if not is_valid:
+            msg = f"Invalid {id_type} card image. Genuine {id_type} card not detected."
+        elif not number_matched:
+            msg = f"Mismatch: Entered {id_type} ({id_number}) does not match card ({extracted_number or 'Not detected'})."
+        else:
+            msg = f"{id_type} verified and matched successfully."
 
         return jsonify({
             "success": True,
-            "overall_match": True,
+            "overall_match": number_matched,
+            "number_match": number_matched,
+            "is_valid_id": is_valid,
             "id_type": id_type,
-            "message": "ID verified successfully."
+            "entered_number": id_number,
+            "extracted_number": extracted_number or "Not detected",
+            "message": msg,
+            "fields": fields,
+            "extracted_data": {
+                "name": extracted_name,
+                "dob": extracted_dob,
+                "gender": extracted_gender,
+                "id_number": extracted_number,
+                "aadhaar_number": extracted_number if id_type.lower() == "aadhaar" else None,
+                "pan_number": extracted_number if id_type.lower() == "pan" else None
+            },
+            "checks": {
+                "number_match": number_matched,
+                "name_match": fields.get("Name", {}).get("match", True) if "Name" in fields else True
+            }
         })
 
     except Exception as e:

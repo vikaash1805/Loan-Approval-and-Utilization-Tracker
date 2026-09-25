@@ -23,6 +23,7 @@ export default defineConfig({
       '/check-image': 'http://localhost:5000',
       '/db-status':   'http://localhost:5000',
       '/mongodb-images': 'http://localhost:5000',
+      '/verify-single-id': 'http://localhost:5000',
     },
   },
 })

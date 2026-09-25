@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api/loanApi";
+import fundmatrixLogo from "../assets/fundmatrix_logo.png";
 import {
   CreditCard,
   Banknote,
@@ -24,12 +25,98 @@ import {
   ChevronUp,
   Info,
   Sliders,
+  User,
+  Phone,
+  Mail,
+  Clock,
+  CalendarCheck,
+  CheckCircle,
 } from "lucide-react";
 
 const fmt = (n) =>
   n !== undefined && n !== null
     ? `₹${Number(n || 0).toLocaleString("en-IN")}`
     : "₹0";
+
+const maskAadhaar = (num) => {
+  if (!num) return "Verified (KYC UID)";
+  const clean = String(num).replace(/\D/g, "");
+  if (clean.length >= 4) {
+    return `•••• •••• ${clean.slice(-4)}`;
+  }
+  return clean || "Verified (KYC UID)";
+};
+
+const maskPan = (pan) => {
+  if (!pan) return "Verified (KYC PAN)";
+  const clean = String(pan).toUpperCase().trim();
+  if (clean.length === 10) {
+    return `${clean.slice(0, 2)}•••••${clean.slice(-3)}`;
+  }
+  return clean || "Verified (KYC PAN)";
+};
+
+const formatDurationServiced = (startDateStr, endDateStr = new Date()) => {
+  if (!startDateStr) return "1 Month Active";
+  try {
+    const start = new Date(startDateStr);
+    const end = new Date(endDateStr);
+    const diffMs = Math.max(0, end.getTime() - start.getTime());
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    const diffMonths = Math.max(
+      1,
+      (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth())
+    );
+    if (diffDays < 30) {
+      return `${diffDays} Day${diffDays === 1 ? "" : "s"} (Month 1)`;
+    }
+    return `${diffMonths} Month${diffMonths === 1 ? "" : "s"} (${diffDays} Days)`;
+  } catch (_) {
+    return "1 Month Active";
+  }
+};
+
+const getMaturityDate = (startDateStr, tenureMonths) => {
+  try {
+    const start = startDateStr ? new Date(startDateStr) : new Date();
+    const maturity = new Date(start);
+    maturity.setMonth(maturity.getMonth() + Number(tenureMonths || 12));
+    return maturity.toLocaleDateString("en-IN", {
+      month: "short",
+      year: "numeric",
+    });
+  } catch (_) {
+    return "N/A";
+  }
+};
+
+const formatDate = (dateStr) => {
+  if (!dateStr) return "N/A";
+  try {
+    return new Date(dateStr).toLocaleDateString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+  } catch (_) {
+    return dateStr;
+  }
+};
+
+const formatDateTime = (dateStr) => {
+  if (!dateStr) return "N/A";
+  try {
+    return new Date(dateStr).toLocaleDateString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch (_) {
+    return dateStr;
+  }
+};
 
 export default function LoanRepayment() {
   const location = useLocation();
@@ -46,6 +133,8 @@ export default function LoanRepayment() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [successReceipt, setSuccessReceipt] = useState(null);
+  const [loanHistory, setLoanHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   // Repayment Mode: "emi" (Amortized EMI), "principal" (Prepayment / Foreclosure), "interest" (Interest Servicing)
   const [paymentType, setPaymentType] = useState(initialType);
@@ -60,8 +149,60 @@ export default function LoanRepayment() {
   const [showAmortization, setShowAmortization] = useState(false);
   const [amortizationData, setAmortizationData] = useState(null);
   const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [scheduleViewMode, setScheduleViewMode] = useState("window"); // "window" = prev/current/next, "all" = all months
 
   const round2 = (num) => Math.round((num + Number.EPSILON) * 100) / 100;
+
+  const getCurrentMonthIndex = () => {
+    if (!selectedLoan) return 1;
+    const startStr = selectedLoan.disbursed_at || selectedLoan.applied_at || selectedLoan.created_at;
+    if (startStr) {
+      const start = new Date(startStr);
+      const now = new Date();
+      const diff = (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth()) + 1;
+      const tenure = selectedLoan.tenure_months || 12;
+      return Math.min(Math.max(diff, 1), tenure);
+    }
+    return 1;
+  };
+
+  const currentMonthIndex = getCurrentMonthIndex();
+
+  const displayedSchedule = useMemo(() => {
+    if (!amortizationData || amortizationData.length === 0) return [];
+    if (scheduleViewMode === "all") return amortizationData;
+
+    let targetMonths = [currentMonthIndex - 1, currentMonthIndex, currentMonthIndex + 1];
+    if (currentMonthIndex <= 1) {
+      targetMonths = [1, 2, 3];
+    } else if (currentMonthIndex >= amortizationData.length) {
+      targetMonths = [amortizationData.length - 2, amortizationData.length - 1, amortizationData.length];
+    }
+
+    return amortizationData.filter((row) => targetMonths.includes(row.month));
+  }, [amortizationData, currentMonthIndex, scheduleViewMode]);
+
+  // Load repayment history for selected loan
+  const loadLoanHistory = async (id) => {
+    if (!id) {
+      setLoanHistory([]);
+      return;
+    }
+    setHistoryLoading(true);
+    try {
+      const res = await api.getUtilization(id);
+      const events = res.events || [];
+      const paymentEvents = events.filter((e) =>
+        ["EMI Payment", "Principal Repayment", "Interest Payment"].includes(e.event_type) ||
+        ["emi", "principal", "interest"].includes(e.payment_type)
+      );
+      setLoanHistory(paymentEvents);
+    } catch (_) {
+      setLoanHistory([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
 
   // Load active loans
   const loadLoans = async () => {
@@ -81,6 +222,7 @@ export default function LoanRepayment() {
         if (match) {
           setSelectedLoan(match);
           setLoanId(match._id);
+          loadLoanHistory(match._id);
           if (initialType === "emi" && match.emi) {
             setAmount(String(Math.round(match.emi)));
           }
@@ -88,6 +230,7 @@ export default function LoanRepayment() {
       } else if (appList.length > 0 && !selectedLoan) {
         setSelectedLoan(appList[0]);
         setLoanId(appList[0]._id);
+        loadLoanHistory(appList[0]._id);
         if (appList[0].emi) {
           setAmount(String(Math.round(appList[0].emi)));
         }
@@ -113,11 +256,81 @@ export default function LoanRepayment() {
     setSelectedLoan(match || null);
     setSuccessReceipt(null);
     setAmortizationData(null);
+    if (match) {
+      loadLoanHistory(match._id);
+    } else {
+      setLoanHistory([]);
+    }
     if (match && paymentType === "emi" && match.emi) {
       setAmount(String(Math.round(match.emi)));
     } else {
       setAmount("");
     }
+  };
+
+  // View past receipt from history
+  const handleViewReceipt = (event) => {
+    if (!selectedLoan) return;
+    const sanctioned = Number(selectedLoan.approved_amount || selectedLoan.amount_requested || 0);
+    const tenure = Number(selectedLoan.tenure_months || 12);
+    const startStr = selectedLoan.disbursed_at || selectedLoan.applied_at || selectedLoan.created_at;
+    const eventDate = event.event_date || event.created_at || new Date().toISOString();
+
+    const sorted = [...loanHistory].sort(
+      (a, b) => new Date(a.event_date || a.created_at) - new Date(b.event_date || b.created_at)
+    );
+    const idx = sorted.findIndex((e) => e._id === event._id);
+    const installmentNumber = idx >= 0 ? idx + 1 : 1;
+    const priorBalance = Number(event.balance_remaining || 0) + Number(event.principal_component || 0);
+
+    setSuccessReceipt({
+      receipt_no: event.receipt_no || `FMX-RCP-${String(event._id || Date.now()).slice(-8).toUpperCase()}`,
+      transaction_ref: event.transaction_ref || `TXN-${String(event._id || Date.now()).slice(-6).toUpperCase()}`,
+      date: eventDate,
+      payment_mode: event.payment_mode || "UPI",
+      payment_type:
+        event.payment_type ||
+        (event.event_type?.toLowerCase().includes("principal")
+          ? "principal"
+          : event.event_type?.toLowerCase().includes("interest")
+          ? "interest"
+          : "emi"),
+      amount: event.amount,
+      principal_component: event.principal_component ?? 0,
+      interest_component: event.interest_component ?? 0,
+      previous_balance: priorBalance,
+      new_balance: event.balance_remaining ?? 0,
+      notes: event.notes || `Direct repayment on ${selectedLoan.loan_type} loan`,
+      // Customer Details
+      customer_name: selectedLoan.applicant_name || user?.name || "Customer",
+      customer_email: selectedLoan.email || user?.email || "customer@fundmatrix.in",
+      customer_phone: selectedLoan.phone || user?.phone || "N/A",
+      customer_aadhaar: selectedLoan.aadhaar_number || "",
+      customer_pan: selectedLoan.pan_number || "",
+      customer_dob: selectedLoan.dob || "",
+      customer_gender: selectedLoan.gender || "",
+      customer_id: `CUST-${(selectedLoan._id || "").slice(-6).toUpperCase()}`,
+      // Loan Details
+      loan_id: selectedLoan._id,
+      loan_type: selectedLoan.loan_type,
+      sanctioned_amount: sanctioned,
+      interest_rate: selectedLoan.interest_rate || 10.5,
+      tenure_months: tenure,
+      emi_amount: selectedLoan.emi || 0,
+      loan_purpose: selectedLoan.purpose || "Credit Facility",
+      disbursed_at: startStr,
+      // Repayment Progress & Tenure
+      months_paid: installmentNumber,
+      months_remaining: Math.max(0, tenure - installmentNumber),
+      how_long_paid: formatDurationServiced(startStr, eventDate),
+      maturity_date: getMaturityDate(startStr, tenure),
+      total_principal_repaid: selectedLoan.total_repaid || 0,
+      total_interest_paid: selectedLoan.total_interest_paid || 0,
+      total_amount_paid: Number(selectedLoan.total_repaid || 0) + Number(selectedLoan.total_interest_paid || 0),
+      repayment_progress_pct:
+        sanctioned > 0 ? (((selectedLoan.total_repaid || 0) / sanctioned) * 100).toFixed(1) : 0,
+      loan_status: selectedLoan.status || "Disbursed",
+    });
   };
 
   // Calculations
@@ -213,6 +426,10 @@ export default function LoanRepayment() {
   const handleProofChange = (e) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        setError("Payment receipt image exceeds 5 MB limit. Please upload a smaller file.");
+        return;
+      }
       setProofFile(file);
       const reader = new FileReader();
       reader.onload = (ev) => setProofPreview(ev.target.result);
@@ -222,15 +439,34 @@ export default function LoanRepayment() {
 
   const handleRepaymentSubmit = async (e) => {
     e.preventDefault();
-    if (!selectedLoan) return;
+    if (!selectedLoan) {
+      setError("Please select an active loan to service repayment.");
+      return;
+    }
+
+    if (outstanding <= 0) {
+      setError("This loan is already fully settled with ₹0 outstanding balance.");
+      return;
+    }
+
     const numAmt = parseFloat(amount);
-    if (!numAmt || numAmt <= 0) {
-      setError("Please enter a valid payment amount.");
+    if (isNaN(numAmt) || numAmt <= 0) {
+      setError("Please enter a valid payment amount greater than ₹0.");
       return;
     }
 
     if (paymentType === "principal" && numAmt > outstanding) {
       setError(`Principal payment cannot exceed current outstanding balance (${fmt(outstanding)}).`);
+      return;
+    }
+
+    if (paymentType === "emi" && numAmt > (outstanding + monthlyInterest) * 1.5) {
+      setError(`EMI payment amount cannot excessively exceed total remaining liability (${fmt(outstanding + monthlyInterest)}).`);
+      return;
+    }
+
+    if (paymentType === "interest" && numAmt > monthlyInterest * 12 && monthlyInterest > 0) {
+      setError(`Interest payment cannot exceed 12 months accrued interest (${fmt(monthlyInterest * 12)}).`);
       return;
     }
 
@@ -250,21 +486,80 @@ export default function LoanRepayment() {
 
       const res = await api.repayLoan(payload);
 
+      const sanctioned = Number(selectedLoan.approved_amount || selectedLoan.amount_requested || 0);
+      const tenure = Number(selectedLoan.tenure_months || 12);
+      const startStr = selectedLoan.disbursed_at || selectedLoan.applied_at || selectedLoan.created_at;
+
+      const pastEmiCount = loanHistory.filter(
+        (e) => e.event_type === "EMI Payment" || e.payment_type === "emi"
+      ).length;
+      const isEmi = paymentType === "emi";
+      const newTotalRepaid = res.total_repaid ?? (totalPrincipalRepaid + livePrincipal);
+      const newTotalInterest = res.total_interest_paid ?? (totalInterestPaid + liveInterest);
+      const newBalanceVal = res.new_balance ?? res.loan?.outstanding_balance ?? simulatedBalance;
+
+      let computedMonthsPaid = pastEmiCount + (isEmi ? 1 : 0);
+      if (sanctioned > 0) {
+        const amortizedMonths = Math.min(
+          tenure,
+          Math.max(1, Math.round((newTotalRepaid / sanctioned) * tenure))
+        );
+        computedMonthsPaid = Math.max(computedMonthsPaid, amortizedMonths);
+      }
+      if (newBalanceVal <= 0) {
+        computedMonthsPaid = tenure;
+      }
+      const computedMonthsRemaining = Math.max(0, tenure - computedMonthsPaid);
+      const progressVal =
+        sanctioned > 0 ? Math.min(100, (newTotalRepaid / sanctioned) * 100).toFixed(1) : 0;
+      const howLongText = formatDurationServiced(startStr, new Date());
+      const maturityText = getMaturityDate(startStr, tenure);
+
+      const rSummary = res.repayment_summary || {};
+
       setSuccessReceipt({
+        receipt_no: res.receipt?.receipt_no || `FMX-RCP-${Date.now().toString().slice(-8)}`,
         ...payload,
         date: new Date().toISOString(),
         previous_balance: outstanding,
-        new_balance: res.new_balance ?? res.loan?.outstanding_balance ?? simulatedBalance,
+        new_balance: newBalanceVal,
         principal_component: res.principal_component ?? livePrincipal,
         interest_component: res.interest_component ?? liveInterest,
-        total_interest_paid: res.total_interest_paid ?? (totalInterestPaid + liveInterest),
-        total_repaid: res.total_repaid ?? (totalPrincipalRepaid + livePrincipal),
+        total_interest_paid: newTotalInterest,
+        total_repaid: newTotalRepaid,
+        total_amount_paid: Number(newTotalRepaid) + Number(newTotalInterest),
+        // Customer Details
+        customer_name: selectedLoan.applicant_name || user?.name || "Customer",
+        customer_email: selectedLoan.email || user?.email || "customer@fundmatrix.in",
+        customer_phone: selectedLoan.phone || user?.phone || "N/A",
+        customer_aadhaar: selectedLoan.aadhaar_number || "",
+        customer_pan: selectedLoan.pan_number || "",
+        customer_dob: selectedLoan.dob || "",
+        customer_gender: selectedLoan.gender || "",
+        customer_id: `CUST-${(selectedLoan._id || "").slice(-6).toUpperCase()}`,
+        // Loan Details
+        loan_id: selectedLoan._id,
         loan_type: selectedLoan.loan_type,
-        applicant_name: selectedLoan.applicant_name,
+        sanctioned_amount: sanctioned,
+        interest_rate: annualRate,
+        tenure_months: tenure,
+        emi_amount: standardEmi,
+        loan_purpose: selectedLoan.purpose || "Credit Facility",
+        disbursed_at: startStr,
+        // Repayment Progress & Tenure
+        months_paid: rSummary.months_paid ?? computedMonthsPaid,
+        months_remaining: rSummary.months_remaining ?? computedMonthsRemaining,
+        how_long_paid: rSummary.duration_days
+          ? `${rSummary.duration_months} Month(s) (${rSummary.duration_days} Days)`
+          : howLongText,
+        maturity_date: maturityText,
+        repayment_progress_pct: rSummary.repayment_progress_pct ?? progressVal,
+        loan_status: newBalanceVal <= 0 ? "Closed / Settled" : selectedLoan.status || "Disbursed",
       });
 
-      // Refresh loans data
+      // Refresh loans data & history
       loadLoans();
+      loadLoanHistory(selectedLoan._id);
       setAmortizationData(null);
     } catch (err) {
       setError(err.message || "Repayment processing failed.");
@@ -275,8 +570,10 @@ export default function LoanRepayment() {
 
   return (
     <div className="fade-in" style={{ maxWidth: 900, margin: "0 auto", paddingBottom: 40 }}>
-      {/* Header */}
-      <div className="page-header" style={{ marginBottom: 20 }}>
+      {/* Main Page Body (hidden during print when receipt modal is active) */}
+      <div className={successReceipt ? "no-print" : ""}>
+        {/* Header */}
+        <div className="page-header" style={{ marginBottom: 20 }}>
         <h1>Loan Repayment & EMI Processing</h1>
         <p>
           Standard reducing-balance amortization with automatic Principal vs. Interest component separation
@@ -453,14 +750,54 @@ export default function LoanRepayment() {
                   border: "1px solid #E2E8F0",
                 }}
               >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
                   <div>
                     <h4 style={{ margin: 0, fontSize: "0.95rem", color: "#0F172A", fontWeight: 800 }}>
-                      Loan Amortization Schedule ({selectedLoan.tenure_months} Months @ {annualRate}% p.a.)
+                      Loan Amortization Schedule {scheduleViewMode === "window" ? "(Previous, Current & Next Month)" : `(${selectedLoan.tenure_months} Months @ ${annualRate}% p.a.)`}
                     </h4>
                     <p style={{ margin: "2px 0 0", fontSize: "0.78rem", color: "#64748B" }}>
-                      Notice how in early months the Interest portion is larger, and over time more of each payment pays down the Principal.
+                      {scheduleViewMode === "window"
+                        ? `Showing 3-month repayment window: Month ${Math.max(1, currentMonthIndex - 1)} (Previous), Month ${currentMonthIndex} (Current Active), and Month ${Math.min(selectedLoan.tenure_months || 12, currentMonthIndex + 1)} (Next).`
+                        : "Notice how in early months the Interest portion is larger, and over time more of each payment pays down the Principal."}
                     </p>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <button
+                      type="button"
+                      onClick={() => setScheduleViewMode("window")}
+                      style={{
+                        fontSize: "0.74rem",
+                        fontWeight: 700,
+                        padding: "5px 12px",
+                        borderRadius: "var(--radius-sm)",
+                        border: "1px solid",
+                        borderColor: scheduleViewMode === "window" ? "#06B6D4" : "#CBD5E1",
+                        background: scheduleViewMode === "window" ? "#ECFEFF" : "#FFFFFF",
+                        color: scheduleViewMode === "window" ? "#0891B2" : "#64748B",
+                        cursor: "pointer",
+                        boxShadow: scheduleViewMode === "window" ? "0 1px 3px rgba(6, 182, 212, 0.15)" : "none",
+                      }}
+                    >
+                      3-Month Window
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setScheduleViewMode("all")}
+                      style={{
+                        fontSize: "0.74rem",
+                        fontWeight: 700,
+                        padding: "5px 12px",
+                        borderRadius: "var(--radius-sm)",
+                        border: "1px solid",
+                        borderColor: scheduleViewMode === "all" ? "#06B6D4" : "#CBD5E1",
+                        background: scheduleViewMode === "all" ? "#ECFEFF" : "#FFFFFF",
+                        color: scheduleViewMode === "all" ? "#0891B2" : "#64748B",
+                        cursor: "pointer",
+                        boxShadow: scheduleViewMode === "all" ? "0 1px 3px rgba(6, 182, 212, 0.15)" : "none",
+                      }}
+                    >
+                      All {selectedLoan.tenure_months || 12} Months
+                    </button>
                   </div>
                 </div>
 
@@ -478,17 +815,79 @@ export default function LoanRepayment() {
                       </tr>
                     </thead>
                     <tbody>
-                      {(amortizationData || []).map((row) => (
-                        <tr key={row.month}>
-                          <td style={{ fontWeight: 700 }}>Month {row.month}</td>
-                          <td>{fmt(row.opening_balance)}</td>
-                          <td style={{ fontWeight: 700 }}>{fmt(row.emi)}</td>
-                          <td style={{ color: "#059669", fontWeight: 700 }}>+{fmt(row.principal_portion)}</td>
-                          <td style={{ color: "#D97706", fontWeight: 700 }}>{fmt(row.interest_portion)}</td>
-                          <td style={{ fontWeight: 800 }}>{fmt(row.closing_balance)}</td>
-                          <td style={{ color: "#64748B" }}>{fmt(row.cumulative_interest)}</td>
-                        </tr>
-                      ))}
+                      {displayedSchedule.map((row) => {
+                        const isCurrent = row.month === currentMonthIndex;
+                        const isPrev = row.month === currentMonthIndex - 1;
+                        const isNext = row.month === currentMonthIndex + 1;
+
+                        return (
+                          <tr
+                            key={row.month}
+                            style={{
+                              background: isCurrent ? "#F0FDF4" : isPrev ? "#F8FAFC" : "#FFFFFF",
+                              borderLeft: isCurrent ? "4px solid #059669" : "4px solid transparent",
+                            }}
+                          >
+                            <td>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                <span style={{ fontWeight: 800 }}>Month {row.month}</span>
+                                {isCurrent && (
+                                  <span
+                                    style={{
+                                      fontSize: "0.65rem",
+                                      fontWeight: 800,
+                                      padding: "2px 6px",
+                                      borderRadius: 4,
+                                      background: "#059669",
+                                      color: "#FFFFFF",
+                                      textTransform: "uppercase",
+                                      letterSpacing: "0.5px",
+                                    }}
+                                  >
+                                    Current
+                                  </span>
+                                )}
+                                {isPrev && (
+                                  <span
+                                    style={{
+                                      fontSize: "0.65rem",
+                                      fontWeight: 700,
+                                      padding: "2px 6px",
+                                      borderRadius: 4,
+                                      background: "#E2E8F0",
+                                      color: "#475569",
+                                      textTransform: "uppercase",
+                                    }}
+                                  >
+                                    Previous
+                                  </span>
+                                )}
+                                {isNext && (
+                                  <span
+                                    style={{
+                                      fontSize: "0.65rem",
+                                      fontWeight: 700,
+                                      padding: "2px 6px",
+                                      borderRadius: 4,
+                                      background: "#EFF6FF",
+                                      color: "#2563EB",
+                                      textTransform: "uppercase",
+                                    }}
+                                  >
+                                    Next
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td style={{ fontWeight: isCurrent ? 700 : 500 }}>{fmt(row.opening_balance)}</td>
+                            <td style={{ fontWeight: 800, color: isCurrent ? "#059669" : "inherit" }}>{fmt(row.emi)}</td>
+                            <td style={{ color: "#059669", fontWeight: 700 }}>+{fmt(row.principal_portion)}</td>
+                            <td style={{ color: "#D97706", fontWeight: 700 }}>{fmt(row.interest_portion)}</td>
+                            <td style={{ fontWeight: 800 }}>{fmt(row.closing_balance)}</td>
+                            <td style={{ color: "#64748B" }}>{fmt(row.cumulative_interest)}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -935,63 +1334,713 @@ export default function LoanRepayment() {
               </button>
             </form>
           </div>
-        </>
-      )}
 
-      {/* Digital Receipt Modal with QR Watermark */}
-      {successReceipt && (
-        <div className="modal-overlay">
-          <div className="modal" style={{ maxWidth: 540 }}>
-            <div style={{ textAlign: "center", marginBottom: 18 }}>
+          {/* Repayment History & Downloadable Receipts */}
+          {selectedLoan && (
+            <div className="card" style={{ marginTop: 24 }}>
               <div
                 style={{
-                  width: 54,
-                  height: 54,
-                  borderRadius: "50%",
-                  background: "#ECFDF5",
-                  color: "#10B981",
                   display: "flex",
+                  justifyContent: "space-between",
                   alignItems: "center",
-                  justifyContent: "center",
-                  margin: "0 auto 10px",
+                  marginBottom: 16,
+                  flexWrap: "wrap",
+                  gap: 10,
                 }}
               >
-                <CheckCircle2 size={32} />
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Receipt size={18} color="#0891B2" />
+                  <span style={{ fontSize: "0.95rem", fontWeight: 800, color: "#0F172A" }}>
+                    Repayment History & Digital Receipts
+                  </span>
+                  <span className="badge badge-indigo" style={{ fontSize: "0.72rem" }}>
+                    {loanHistory.length} Record{loanHistory.length === 1 ? "" : "s"}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => loadLoanHistory(selectedLoan._id)}
+                  disabled={historyLoading}
+                  style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.76rem" }}
+                >
+                  <RefreshCw
+                    size={12}
+                    style={{ animation: historyLoading ? "spin 0.8s linear infinite" : "none" }}
+                  />
+                  Refresh Records
+                </button>
               </div>
-              <h3 style={{ marginBottom: 4 }}>Repayment Successful!</h3>
-              <p style={{ fontSize: "0.85rem", color: "#64748B" }}>
-                Digital receipt generated and credited with amortized principal deduction.
-              </p>
+
+              {historyLoading ? (
+                <div style={{ textAlign: "center", padding: 24, color: "#64748B", fontSize: "0.85rem" }}>
+                  <RefreshCw size={16} style={{ animation: "spin 0.8s linear infinite", display: "inline-block", marginRight: 8 }} />
+                  Loading payment history...
+                </div>
+              ) : loanHistory.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "24px 16px", color: "#64748B", fontSize: "0.85rem", background: "#F8FAFC", borderRadius: "var(--radius-sm)", border: "1px dashed #E2E8F0" }}>
+                  <Receipt size={24} color="#94A3B8" style={{ margin: "0 auto 8px", display: "block" }} />
+                  No repayment transactions recorded yet for this loan facility.
+                  <div style={{ fontSize: "0.75rem", marginTop: 4, color: "#94A3B8" }}>
+                    Once a payment is completed, its full customer receipt can be viewed and printed anytime here.
+                  </div>
+                </div>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table className="table" style={{ fontSize: "0.8rem", margin: 0 }}>
+                    <thead>
+                      <tr>
+                        <th>Date & Time</th>
+                        <th>Transaction Ref</th>
+                        <th>Type & Mode</th>
+                        <th>Amount Paid</th>
+                        <th>Principal vs. Interest</th>
+                        <th>Balance After</th>
+                        <th style={{ textAlign: "right" }}>Receipt</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {loanHistory.map((ev, idx) => (
+                        <tr key={ev._id || idx}>
+                          <td>
+                            <div style={{ fontWeight: 700, color: "#0F172A" }}>
+                              {formatDate(ev.event_date || ev.created_at)}
+                            </div>
+                            <div style={{ fontSize: "0.7rem", color: "#64748B" }}>
+                              {formatDateTime(ev.event_date || ev.created_at).split(",")[1] || ""}
+                            </div>
+                          </td>
+                          <td>
+                            <span style={{ fontFamily: "monospace", fontWeight: 700, color: "#334155" }}>
+                              {ev.transaction_ref || `TXN-${String(ev._id || idx).slice(-6).toUpperCase()}`}
+                            </span>
+                          </td>
+                          <td>
+                            <span
+                              style={{
+                                fontSize: "0.7rem",
+                                fontWeight: 800,
+                                textTransform: "uppercase",
+                                padding: "2px 6px",
+                                borderRadius: 4,
+                                background: "#F1F5F9",
+                                color: "#334155",
+                                display: "inline-block",
+                                marginBottom: 2,
+                              }}
+                            >
+                              {ev.event_type || ev.payment_type || "Payment"}
+                            </span>
+                            <div style={{ fontSize: "0.7rem", color: "#64748B" }}>
+                              via {ev.payment_mode || "UPI"}
+                            </div>
+                          </td>
+                          <td>
+                            <strong style={{ color: "#0F172A", fontSize: "0.88rem" }}>
+                              {fmt(ev.amount)}
+                            </strong>
+                          </td>
+                          <td>
+                            <div style={{ fontSize: "0.72rem", color: "#059669", fontWeight: 700 }}>
+                              Principal: +{fmt(ev.principal_component || 0)}
+                            </div>
+                            <div style={{ fontSize: "0.72rem", color: "#D97706", fontWeight: 600 }}>
+                              Interest: +{fmt(ev.interest_component || 0)}
+                            </div>
+                          </td>
+                          <td>
+                            <span style={{ fontWeight: 800, color: "#0F172A" }}>
+                              {fmt(ev.balance_remaining)}
+                            </span>
+                          </td>
+                          <td style={{ textAlign: "right" }}>
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => handleViewReceipt(ev)}
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 4,
+                                padding: "4px 8px",
+                                fontSize: "0.74rem",
+                                color: "#0891B2",
+                                fontWeight: 700,
+                              }}
+                            >
+                              <Receipt size={13} /> View Receipt
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+      </div>
+
+      {/* Digital Receipt Modal with Comprehensive Customer, Loan & Tenure Details */}
+      {successReceipt && (
+        <div className="modal-overlay print-receipt-overlay">
+          <div
+            className="modal print-receipt-modal"
+            style={{
+              maxWidth: 680,
+              width: "100%",
+              padding: "24px 28px",
+              maxHeight: "92vh",
+              overflowY: "auto",
+            }}
+          >
+            {/* Header: Brand & Document Title */}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                paddingBottom: 16,
+                borderBottom: "2px solid #E2E8F0",
+                marginBottom: 16,
+                flexWrap: "wrap",
+                gap: 12,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <img
+                  src={fundmatrixLogo}
+                  alt="FundMatrix"
+                  style={{ height: 38, maxWidth: 160, objectFit: "contain" }}
+                />
+                <div>
+                  <div
+                    style={{
+                      fontSize: "0.95rem",
+                      fontWeight: 800,
+                      color: "#0F172A",
+                      letterSpacing: "0.5px",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    Repayment Receipt
+                  </div>
+                  <div style={{ fontSize: "0.72rem", color: "#64748B", fontWeight: 600 }}>
+                    Official Reducing-Balance Credit Ledger
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ textAlign: "right" }}>
+                <div
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    background: "#ECFDF5",
+                    color: "#059669",
+                    padding: "4px 10px",
+                    borderRadius: 20,
+                    fontSize: "0.74rem",
+                    fontWeight: 800,
+                    border: "1px solid #A7F3D0",
+                    marginBottom: 4,
+                  }}
+                >
+                  <CheckCircle2 size={13} /> Payment Credited
+                </div>
+                <div style={{ fontSize: "0.74rem", color: "#64748B", fontFamily: "monospace" }}>
+                  Receipt #: <strong style={{ color: "#0F172A" }}>{successReceipt.receipt_no}</strong>
+                </div>
+                <div style={{ fontSize: "0.72rem", color: "#64748B" }}>
+                  Issued: {formatDateTime(successReceipt.date)}
+                </div>
+              </div>
             </div>
 
-            {/* Receipt Box */}
+            {/* SECTION 1: Customer / Borrower Information */}
             <div
               style={{
                 background: "#F8FAFC",
                 border: "1px solid #E2E8F0",
                 borderRadius: "var(--radius-md)",
-                padding: "18px 20px",
-                marginBottom: 20,
-                position: "relative",
+                padding: "12px 16px",
+                marginBottom: 14,
               }}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: "0.84rem" }}>
-                <span style={{ color: "#64748B" }}>Transaction Ref</span>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: "0.78rem",
+                  fontWeight: 800,
+                  color: "#0891B2",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.5px",
+                  marginBottom: 10,
+                  borderBottom: "1px solid #E2E8F0",
+                  paddingBottom: 6,
+                }}
+              >
+                <User size={14} /> Borrower / Customer Profile
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                  gap: "10px 18px",
+                  fontSize: "0.82rem",
+                }}
+              >
+                <div>
+                  <span style={{ color: "#64748B", display: "block", fontSize: "0.72rem" }}>
+                    Customer Full Name
+                  </span>
+                  <strong style={{ color: "#0F172A", fontSize: "0.92rem" }}>
+                    {successReceipt.customer_name}
+                  </strong>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748B", display: "block", fontSize: "0.72rem" }}>
+                    Customer / Borrower ID
+                  </span>
+                  <span style={{ fontFamily: "monospace", fontWeight: 700, color: "#475569" }}>
+                    {successReceipt.customer_id}
+                  </span>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748B", display: "block", fontSize: "0.72rem" }}>
+                    Registered Email
+                  </span>
+                  <span style={{ color: "#334155", fontWeight: 600 }}>
+                    {successReceipt.customer_email}
+                  </span>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748B", display: "block", fontSize: "0.72rem" }}>
+                    Registered Mobile
+                  </span>
+                  <span style={{ color: "#334155", fontWeight: 700 }}>
+                    +91 {successReceipt.customer_phone}
+                  </span>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748B", display: "block", fontSize: "0.72rem" }}>
+                    Aadhaar Card (UID)
+                  </span>
+                  <span style={{ fontFamily: "monospace", fontWeight: 700, color: "#334155" }}>
+                    {maskAadhaar(successReceipt.customer_aadhaar)}
+                  </span>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748B", display: "block", fontSize: "0.72rem" }}>
+                    PAN Number
+                  </span>
+                  <span style={{ fontFamily: "monospace", fontWeight: 700, color: "#334155" }}>
+                    {maskPan(successReceipt.customer_pan)}
+                  </span>
+                </div>
+
+                {successReceipt.customer_dob && (
+                  <div>
+                    <span style={{ color: "#64748B", display: "block", fontSize: "0.72rem" }}>
+                      DOB & Gender
+                    </span>
+                    <span style={{ color: "#334155", fontWeight: 600 }}>
+                      {successReceipt.customer_dob} {successReceipt.customer_gender ? `(${successReceipt.customer_gender})` : ""}
+                    </span>
+                  </div>
+                )}
+
+                <div>
+                  <span style={{ color: "#64748B", display: "block", fontSize: "0.72rem" }}>
+                    KYC Verification
+                  </span>
+                  <span style={{ color: "#059669", fontWeight: 700, fontSize: "0.78rem" }}>
+                    ✓ Identity Verified & Compliant
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* SECTION 2: Loan Facility Details */}
+            <div
+              style={{
+                background: "#F8FAFC",
+                border: "1px solid #E2E8F0",
+                borderRadius: "var(--radius-md)",
+                padding: "12px 16px",
+                marginBottom: 14,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: "0.78rem",
+                  fontWeight: 800,
+                  color: "#0891B2",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.5px",
+                  marginBottom: 10,
+                  borderBottom: "1px solid #E2E8F0",
+                  paddingBottom: 6,
+                }}
+              >
+                <Landmark size={14} /> Loan Facility Overview
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                  gap: "10px 18px",
+                  fontSize: "0.82rem",
+                }}
+              >
+                <div>
+                  <span style={{ color: "#64748B", display: "block", fontSize: "0.72rem" }}>
+                    Loan Account Number (LAN)
+                  </span>
+                  <span style={{ fontWeight: 800, color: "#0F172A", fontFamily: "monospace" }}>
+                    LNX-{successReceipt.loan_id?.slice(-8).toUpperCase()}
+                  </span>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748B", display: "block", fontSize: "0.72rem" }}>
+                    Facility Category
+                  </span>
+                  <strong style={{ color: "#0F172A" }}>
+                    {successReceipt.loan_type} Loan
+                  </strong>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748B", display: "block", fontSize: "0.72rem" }}>
+                    Original Sanctioned Principal
+                  </span>
+                  <strong style={{ color: "#0F172A", fontSize: "0.95rem" }}>
+                    {fmt(successReceipt.sanctioned_amount)}
+                  </strong>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748B", display: "block", fontSize: "0.72rem" }}>
+                    Annual Interest Rate
+                  </span>
+                  <strong style={{ color: "#D97706" }}>
+                    {successReceipt.interest_rate}% p.a. (Reducing)
+                  </strong>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748B", display: "block", fontSize: "0.72rem" }}>
+                    Total Sanctioned Tenure
+                  </span>
+                  <strong style={{ color: "#0F172A" }}>
+                    {successReceipt.tenure_months} Months ({(Number(successReceipt.tenure_months || 12) / 12).toFixed(1)} Years)
+                  </strong>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748B", display: "block", fontSize: "0.72rem" }}>
+                    Standard Agreed Monthly EMI
+                  </span>
+                  <strong style={{ color: "#0891B2" }}>
+                    {fmt(successReceipt.emi_amount)}
+                  </strong>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748B", display: "block", fontSize: "0.72rem" }}>
+                    Activation / Disbursed Date
+                  </span>
+                  <span style={{ color: "#334155", fontWeight: 600 }}>
+                    {formatDate(successReceipt.disbursed_at)}
+                  </span>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748B", display: "block", fontSize: "0.72rem" }}>
+                    Facility Status
+                  </span>
+                  <span
+                    style={{
+                      fontWeight: 800,
+                      color: successReceipt.new_balance <= 0 ? "#059669" : "#2563EB",
+                      fontSize: "0.78rem",
+                    }}
+                  >
+                    ● {successReceipt.new_balance <= 0 ? "Fully Paid & Settled" : (successReceipt.loan_status || "Disbursed & Active")}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* SECTION 3: Repayment & Tenure Progress (KEY REQUIREMENT: How many months paid, how long paid, remaining) */}
+            <div
+              style={{
+                background: "linear-gradient(135deg, #F0FDF4 0%, #ECFEFF 100%)",
+                border: "1px solid #A7F3D0",
+                borderRadius: "var(--radius-md)",
+                padding: "14px 16px",
+                marginBottom: 14,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  fontSize: "0.78rem",
+                  fontWeight: 800,
+                  color: "#059669",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.5px",
+                  marginBottom: 12,
+                  borderBottom: "1px solid #BBF7D0",
+                  paddingBottom: 6,
+                  flexWrap: "wrap",
+                  gap: 6,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <CalendarCheck size={15} /> Tenure & Cumulative Repayment Milestones
+                </div>
+                <span
+                  style={{
+                    background: "#059669",
+                    color: "#FFFFFF",
+                    padding: "2px 8px",
+                    borderRadius: 12,
+                    fontSize: "0.68rem",
+                    fontWeight: 700,
+                  }}
+                >
+                  {successReceipt.repayment_progress_pct}% Completed
+                </span>
+              </div>
+
+              {/* 4 Stat Highlights */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+                  gap: 10,
+                  marginBottom: 12,
+                }}
+              >
+                <div
+                  style={{
+                    background: "#FFFFFF",
+                    padding: "10px 12px",
+                    borderRadius: "var(--radius-sm)",
+                    border: "1px solid #E2E8F0",
+                  }}
+                >
+                  <span style={{ fontSize: "0.7rem", color: "#64748B", display: "block", textTransform: "uppercase", fontWeight: 700 }}>
+                    Months Paid
+                  </span>
+                  <div style={{ fontSize: "1.05rem", fontWeight: 800, color: "#0F172A", marginTop: 2 }}>
+                    Month {successReceipt.months_paid} <span style={{ fontSize: "0.78rem", color: "#64748B", fontWeight: 600 }}>/ {successReceipt.tenure_months}</span>
+                  </div>
+                  <span style={{ fontSize: "0.68rem", color: "#059669", fontWeight: 700 }}>
+                    {successReceipt.months_paid} Installments Cleared
+                  </span>
+                </div>
+
+                <div
+                  style={{
+                    background: "#FFFFFF",
+                    padding: "10px 12px",
+                    borderRadius: "var(--radius-sm)",
+                    border: "1px solid #E2E8F0",
+                  }}
+                >
+                  <span style={{ fontSize: "0.7rem", color: "#64748B", display: "block", textTransform: "uppercase", fontWeight: 700 }}>
+                    How Long Paid
+                  </span>
+                  <div style={{ fontSize: "1.02rem", fontWeight: 800, color: "#0891B2", marginTop: 2 }}>
+                    {successReceipt.how_long_paid}
+                  </div>
+                  <span style={{ fontSize: "0.68rem", color: "#64748B" }}>
+                    Since {formatDate(successReceipt.disbursed_at)}
+                  </span>
+                </div>
+
+                <div
+                  style={{
+                    background: "#FFFFFF",
+                    padding: "10px 12px",
+                    borderRadius: "var(--radius-sm)",
+                    border: "1px solid #E2E8F0",
+                  }}
+                >
+                  <span style={{ fontSize: "0.7rem", color: "#64748B", display: "block", textTransform: "uppercase", fontWeight: 700 }}>
+                    Remaining Months
+                  </span>
+                  <div style={{ fontSize: "1.05rem", fontWeight: 800, color: "#F59E0B", marginTop: 2 }}>
+                    {successReceipt.months_remaining} Month{successReceipt.months_remaining === 1 ? "" : "s"}
+                  </div>
+                  <span style={{ fontSize: "0.68rem", color: "#64748B" }}>
+                    Maturity: {successReceipt.maturity_date}
+                  </span>
+                </div>
+
+                <div
+                  style={{
+                    background: "#FFFFFF",
+                    padding: "10px 12px",
+                    borderRadius: "var(--radius-sm)",
+                    border: "1px solid #E2E8F0",
+                  }}
+                >
+                  <span style={{ fontSize: "0.7rem", color: "#64748B", display: "block", textTransform: "uppercase", fontWeight: 700 }}>
+                    Tenure Progress
+                  </span>
+                  <div style={{ fontSize: "1.05rem", fontWeight: 800, color: "#059669", marginTop: 2 }}>
+                    {successReceipt.repayment_progress_pct}%
+                  </div>
+                  <div style={{ width: "100%", height: 5, background: "#E2E8F0", borderRadius: 3, marginTop: 4, overflow: "hidden" }}>
+                    <div
+                      style={{
+                        width: `${Math.min(100, Math.max(0, Number(successReceipt.repayment_progress_pct || 0)))}%`,
+                        height: "100%",
+                        background: "#059669",
+                        borderRadius: 3,
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Cumulative Financial Ledger */}
+              <div
+                style={{
+                  background: "#FFFFFF",
+                  border: "1px solid #CBD5E1",
+                  borderRadius: "var(--radius-sm)",
+                  padding: "10px 14px",
+                  fontSize: "0.8rem",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
+                  <span style={{ color: "#64748B" }}>Total Principal Repaid to Date</span>
+                  <strong style={{ color: "#059669" }}>{fmt(successReceipt.total_repaid)}</strong>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
+                  <span style={{ color: "#64748B" }}>Total Cumulative Interest Serviced</span>
+                  <strong style={{ color: "#D97706" }}>{fmt(successReceipt.total_interest_paid)}</strong>
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    paddingTop: 6,
+                    borderTop: "1px dashed #E2E8F0",
+                    marginBottom: 5,
+                  }}
+                >
+                  <span style={{ color: "#334155", fontWeight: 700 }}>Total Payments Remitted Across Loan</span>
+                  <strong style={{ color: "#0F172A", fontWeight: 800 }}>
+                    {fmt(successReceipt.total_amount_paid)}
+                  </strong>
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    paddingTop: 6,
+                    borderTop: "1px solid #CBD5E1",
+                    fontSize: "0.86rem",
+                  }}
+                >
+                  <span style={{ color: "#0F172A", fontWeight: 800 }}>Remaining Outstanding Principal</span>
+                  <strong style={{ color: "#0F172A", fontWeight: 900, fontSize: "0.95rem" }}>
+                    {fmt(successReceipt.new_balance)}
+                  </strong>
+                </div>
+              </div>
+            </div>
+
+            {/* SECTION 4: Current Transaction Particulars */}
+            <div
+              style={{
+                background: "#F8FAFC",
+                border: "1px solid #E2E8F0",
+                borderRadius: "var(--radius-md)",
+                padding: "12px 16px",
+                marginBottom: 16,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: "0.78rem",
+                  fontWeight: 800,
+                  color: "#0891B2",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.5px",
+                  marginBottom: 10,
+                  borderBottom: "1px solid #E2E8F0",
+                  paddingBottom: 6,
+                }}
+              >
+                <Receipt size={14} /> Current Transaction Details
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: "0.82rem" }}>
+                <span style={{ color: "#64748B" }}>Transaction UTR / Ref</span>
                 <span style={{ fontWeight: 700, fontFamily: "monospace" }}>{successReceipt.transaction_ref}</span>
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: "0.84rem" }}>
-                <span style={{ color: "#64748B" }}>Payment Mode</span>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: "0.82rem" }}>
+                <span style={{ color: "#64748B" }}>Payment Channel & Mode</span>
                 <span style={{ fontWeight: 700 }}>{successReceipt.payment_mode}</span>
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: "0.84rem" }}>
-                <span style={{ color: "#64748B" }}>Payment Type</span>
-                <span className="badge badge-indigo" style={{ fontSize: "0.72rem", textTransform: "uppercase" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: "0.82rem" }}>
+                <span style={{ color: "#64748B" }}>Payment Classification</span>
+                <span
+                  style={{
+                    fontSize: "0.72rem",
+                    fontWeight: 800,
+                    textTransform: "uppercase",
+                    padding: "2px 8px",
+                    borderRadius: 4,
+                    background: "#EFF6FF",
+                    color: "#2563EB",
+                    border: "1px solid #BFDBFE",
+                  }}
+                >
                   {successReceipt.payment_type}
                 </span>
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: "0.95rem" }}>
-                <span style={{ color: "#0F172A", fontWeight: 700 }}>Total Amount Paid</span>
-                <span style={{ fontWeight: 800, color: "#0F172A" }}>{fmt(successReceipt.amount)}</span>
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  marginBottom: 8,
+                  fontSize: "0.95rem",
+                  paddingTop: 4,
+                }}
+              >
+                <span style={{ color: "#0F172A", fontWeight: 800 }}>Gross Amount Remitted</span>
+                <span style={{ fontWeight: 900, color: "#0F172A", fontSize: "1.1rem" }}>
+                  {fmt(successReceipt.amount)}
+                </span>
               </div>
 
               {/* Itemized Split */}
@@ -1000,18 +2049,18 @@ export default function LoanRepayment() {
                   background: "#FFFFFF",
                   border: "1px solid #E2E8F0",
                   borderRadius: "var(--radius-sm)",
-                  padding: "10px 12px",
-                  margin: "10px 0",
+                  padding: "8px 12px",
+                  margin: "8px 0",
                   fontSize: "0.82rem",
                 }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                  <span style={{ color: "#059669", fontWeight: 700 }}>✓ Principal Deducted</span>
-                  <span style={{ fontWeight: 800, color: "#10B981" }}>{fmt(successReceipt.principal_component)}</span>
+                  <span style={{ color: "#059669", fontWeight: 700 }}>✓ Principal Balance Deduction</span>
+                  <span style={{ fontWeight: 800, color: "#059669" }}>+{fmt(successReceipt.principal_component)}</span>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "#D97706", fontWeight: 700 }}>✓ Interest Fee Serviced</span>
-                  <span style={{ fontWeight: 800, color: "#F59E0B" }}>{fmt(successReceipt.interest_component)}</span>
+                  <span style={{ color: "#D97706", fontWeight: 700 }}>✓ Interest Servicing Fee</span>
+                  <span style={{ fontWeight: 800, color: "#D97706" }}>+{fmt(successReceipt.interest_component)}</span>
                 </div>
               </div>
 
@@ -1019,17 +2068,48 @@ export default function LoanRepayment() {
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
-                  paddingTop: 10,
-                  borderTop: "1px solid #E2E8F0",
-                  fontSize: "0.86rem",
+                  fontSize: "0.8rem",
+                  color: "#64748B",
+                  marginTop: 6,
                 }}
               >
-                <span style={{ color: "#64748B" }}>New Outstanding Principal</span>
-                <span style={{ fontWeight: 800, color: "#0F172A" }}>{fmt(successReceipt.new_balance)}</span>
+                <span>Balance Before Payment: {fmt(successReceipt.previous_balance)}</span>
+                <span style={{ fontWeight: 700, color: "#0F172A" }}>
+                  Balance After Payment: {fmt(successReceipt.new_balance)}
+                </span>
+              </div>
+
+              {successReceipt.notes && (
+                <div style={{ marginTop: 8, fontSize: "0.75rem", color: "#64748B", borderTop: "1px dashed #E2E8F0", paddingTop: 6 }}>
+                  <strong>Narration:</strong> {successReceipt.notes}
+                </div>
+              )}
+            </div>
+
+            {/* Verification Watermark & Seal */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                padding: "10px 14px",
+                background: "#F8FAFC",
+                border: "1px dashed #CBD5E1",
+                borderRadius: "var(--radius-sm)",
+                marginBottom: 16,
+              }}
+            >
+              <QrCode size={36} color="#475569" style={{ flexShrink: 0 }} />
+              <div style={{ fontSize: "0.7rem", color: "#64748B", lineHeight: 1.4 }}>
+                <strong style={{ color: "#334155", display: "block" }}>
+                  Digitally Verified Electronic Acknowledgement
+                </strong>
+                Generated by FundMatrix Core Amortization Engine. Real-time balance reconciled under RBI digital lending guidelines. No physical signature required.
               </div>
             </div>
 
-            <div className="modal-footer">
+            {/* Modal Actions */}
+            <div className="modal-footer no-print" style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
               <button className="btn btn-ghost" onClick={() => setSuccessReceipt(null)}>
                 Close
               </button>
@@ -1039,7 +2119,7 @@ export default function LoanRepayment() {
                   window.print();
                 }}
               >
-                <Download size={14} /> Print Receipt
+                <Download size={14} /> Print / Save PDF Receipt
               </button>
             </div>
           </div>

@@ -1,8 +1,12 @@
 import { useEffect, useState, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useNotifications } from "../context/NotificationContext";
 import { api } from "../api/loanApi";
 import fundmatrixLogo from "../assets/fundmatrix_logo.png";
+import ConfettiEffect from "../components/ConfettiEffect";
+import RepaymentSavingsSimulator from "../components/RepaymentSavingsSimulator";
+import SkeletonLoader from "../components/SkeletonLoader";
 import {
   CreditCard,
   Banknote,
@@ -122,6 +126,7 @@ export default function LoanRepayment() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, isOfficer } = useAuth();
+  const { addNotification, refreshNotifications } = useNotifications();
 
   const initialLoanId = location.state?.loanId || "";
   const initialType = location.state?.paymentType || "emi";
@@ -486,6 +491,15 @@ export default function LoanRepayment() {
 
       const res = await api.repayLoan(payload);
 
+      addNotification({
+        title: `Payment Received: ₹${numAmt.toLocaleString("en-IN")}`,
+        desc: `Repayment (${paymentType.toUpperCase()}) of ₹${numAmt.toLocaleString("en-IN")} processed successfully via ${paymentMode}.`,
+        type: "success",
+        link: "/repay",
+        metadata: { loan_id: selectedLoan._id, amount: numAmt }
+      });
+      refreshNotifications();
+
       const sanctioned = Number(selectedLoan.approved_amount || selectedLoan.amount_requested || 0);
       const tenure = Number(selectedLoan.tenure_months || 12);
       const startStr = selectedLoan.disbursed_at || selectedLoan.applied_at || selectedLoan.created_at;
@@ -570,6 +584,9 @@ export default function LoanRepayment() {
 
   return (
     <div className="fade-in" style={{ maxWidth: 900, margin: "0 auto", paddingBottom: 40 }}>
+      {/* Confetti celebration effect on successful repayment receipt */}
+      <ConfettiEffect active={!!successReceipt} />
+
       {/* Main Page Body (hidden during print when receipt modal is active) */}
       <div className={successReceipt ? "no-print" : ""}>
         {/* Header */}
@@ -580,7 +597,7 @@ export default function LoanRepayment() {
         </p>
       </div>
 
-      {loading && <div className="spinner" />}
+      {loading && <SkeletonLoader type="card" count={2} />}
       {error && <div className="alert alert-error" style={{ marginBottom: 16 }}>{error}</div>}
 
       {loans.length === 0 && !loading && (
@@ -894,6 +911,17 @@ export default function LoanRepayment() {
               </div>
             )}
           </div>
+          {/* Smart Prepayment & Savings Simulator */}
+          <RepaymentSavingsSimulator
+            outstanding={outstanding}
+            interestRate={annualRate}
+            tenureMonths={tenure}
+            currentEmi={standardEmi}
+            onApplyExtraPayment={(simAmt, simMode) => {
+              handleModeChange(simMode);
+              setAmount(String(simAmt));
+            }}
+          />
 
           {/* Repayment Terminal */}
           <div className="card">

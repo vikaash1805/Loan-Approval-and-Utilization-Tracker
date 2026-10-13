@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useNotifications } from "../context/NotificationContext";
 import { api } from "../api/loanApi";
 import {
   CheckCircle,
@@ -32,188 +33,13 @@ import {
   AlertCircle,
   Lock,
   Unlock,
+  Clock,
+  Download,
 } from "lucide-react";
 
-export const LOAN_DOCUMENTS_CONFIG = {
-  Home: {
-    title: "Home & Property Documentation",
-    description: "Please upload official property and title ownership records for your Home Loan underwriting.",
-    icon: Home,
-    badgeColor: "#0891B2",
-    badgeBg: "#ECFEFF",
-    docs: [
-      {
-        id: "property_deed",
-        label: "Property Title Deed / Sale Deed Agreement",
-        description: "Registered sale deed, purchase agreement, or builder allotment letter proving legal property ownership",
-        required: true,
-        accept: "image/*,.pdf",
-      },
-      {
-        id: "tax_receipt",
-        label: "Property Tax Receipt / Municipal Khata Certificate",
-        description: "Latest paid municipal property tax receipt, Khata certificate, or property assessment statement",
-        required: true,
-        accept: "image/*,.pdf",
-      },
-      {
-        id: "building_noc",
-        label: "Approved Building Plan & Society NOC",
-        description: "Sanctioned architectural layout plan, occupancy certificate (OC), or housing society NOC",
-        required: false,
-        accept: "image/*,.pdf",
-      },
-      {
-        id: "encumbrance_certificate",
-        label: "Encumbrance Certificate (EC)",
-        description: "Form 15/16 search report certifying property is free from legal dues/mortgages",
-        required: false,
-        accept: "image/*,.pdf",
-      },
-    ],
-  },
-  Vehicle: {
-    title: "Vehicle & Registration Documentation",
-    description: "Please upload vehicle registration or dealer quotation documents for your Vehicle Loan.",
-    icon: Car,
-    badgeColor: "#6366F1",
-    badgeBg: "#EEF2FF",
-    docs: [
-      {
-        id: "rc_or_quotation",
-        label: "Vehicle RC Book / Proforma Price Quotation",
-        description: "Vehicle Registration Certificate (for used vehicle) or Authorized Dealer Proforma Invoice / Price Quotation (for new vehicle)",
-        required: true,
-        accept: "image/*,.pdf",
-      },
-      {
-        id: "driving_license",
-        label: "Driver's License (DL)",
-        description: "Valid permanent driving license of the primary borrower or designated driver",
-        required: true,
-        accept: "image/*,.pdf",
-      },
-      {
-        id: "vehicle_insurance",
-        label: "Vehicle Insurance Policy Copy",
-        description: "Valid comprehensive or third-party motor insurance certificate copy",
-        required: false,
-        accept: "image/*,.pdf",
-      },
-      {
-        id: "puc_tax_receipt",
-        label: "Pollution Certificate (PUC) / Road Tax Receipt",
-        description: "Valid PUC emission certificate or commercial road fitness receipt",
-        required: false,
-        accept: "image/*,.pdf",
-      },
-    ],
-  },
-  Personal: {
-    title: "Income & Employment Documentation",
-    description: "Please upload income and employment verification documents for your Personal Loan.",
-    icon: UserCheck,
-    badgeColor: "#10B981",
-    badgeBg: "#ECFDF5",
-    docs: [
-      {
-        id: "salary_slips",
-        label: "Salary Slips (Last 3 Months) / Form 16",
-        description: "Official stamped monthly payslips or annual Form 16 Part A & B",
-        required: true,
-        accept: "image/*,.pdf",
-      },
-      {
-        id: "bank_statement",
-        label: "Salary Bank Account Statement (Last 6 Months)",
-        description: "Bank statement showing regular monthly salary credits and average balance",
-        required: true,
-        accept: "image/*,.pdf",
-      },
-      {
-        id: "employment_id",
-        label: "Employee ID Card / Appointment Letter",
-        description: "Valid corporate badge or formal job confirmation / offer letter",
-        required: false,
-        accept: "image/*,.pdf",
-      },
-    ],
-  },
-  Business: {
-    title: "Commercial & Business Registration Documentation",
-    description: "Please upload business registration and statutory financial filings for your Business Loan.",
-    icon: Briefcase,
-    badgeColor: "#F59E0B",
-    badgeBg: "#FEF3C7",
-    docs: [
-      {
-        id: "gst_certificate",
-        label: "Business Registration / GST Certificate / MSME Udyam",
-        description: "GST registration certificate (REG-06), MSME Udyam certificate, or Shop & Establishment License",
-        required: true,
-        accept: "image/*,.pdf",
-      },
-      {
-        id: "business_bank_statement",
-        label: "Current Account Bank Statement (Last 12 Months)",
-        description: "Commercial banking statements demonstrating annual operational business cash flow",
-        required: true,
-        accept: "image/*,.pdf",
-      },
-      {
-        id: "itr_financials",
-        label: "ITR Filings & Audited Balance Sheet (Last 2 Years)",
-        description: "Income Tax Returns with Profit & Loss Statement, Balance Sheet, and CA audit report",
-        required: false,
-        accept: "image/*,.pdf",
-      },
-      {
-        id: "commercial_lease",
-        label: "Office / Factory Lease Agreement",
-        description: "Commercial premises tenancy agreement or utility electricity bill in business name",
-        required: false,
-        accept: "image/*,.pdf",
-      },
-    ],
-  },
-  Education: {
-    title: "Academic & Institute Documentation",
-    description: "Please upload academic credentials and official institution admission documents for your Education Loan.",
-    icon: GraduationCap,
-    badgeColor: "#A855F7",
-    badgeBg: "#FAF5FF",
-    docs: [
-      {
-        id: "admission_letter",
-        label: "University / Institute Admission Offer Letter",
-        description: "Official unconditional or conditional admission letter specifying course, duration & campus",
-        required: true,
-        accept: "image/*,.pdf",
-      },
-      {
-        id: "fee_structure",
-        label: "Official Institute Fee Schedule / Breakdown",
-        description: "Itemized semester tuition fee, hostel expenses, and examination fee estimate on college letterhead",
-        required: true,
-        accept: "image/*,.pdf",
-      },
-      {
-        id: "academic_transcripts",
-        label: "Academic Marksheets (10th, 12th & Degree)",
-        description: "Certified copies of high school, intermediate, and undergraduate degrees or diplomas",
-        required: false,
-        accept: "image/*,.pdf",
-      },
-      {
-        id: "parent_income_proof",
-        label: "Co-Borrower / Parent Income Proof & Bank Statement",
-        description: "Salary slips or ITR of parent/guardian supporting the education loan guarantee",
-        required: false,
-        accept: "image/*,.pdf",
-      },
-    ],
-  },
-};
+import { LOAN_DOCUMENTS_CONFIG } from "../config/loanDocuments";
+export { LOAN_DOCUMENTS_CONFIG };
+
 
 const LOAN_TYPES = ["Personal", "Business", "Home", "Education", "Vehicle"];
 const GENDERS = ["Male", "Female", "Transgender"];
@@ -250,6 +76,18 @@ const fileToBase64 = (file) =>
     reader.onload = () => resolve(reader.result);
     reader.onerror = (error) => reject(error);
   });
+
+// Cryptographic SHA-256 document integrity calculation
+const computeSHA256 = async (file) => {
+  try {
+    const buffer = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    return "";
+  }
+};
 
 // Inline Field Match Preview Row
 function FieldRow({ label, userVal, extractedVal, match }) {
@@ -295,6 +133,7 @@ function FieldRow({ label, userVal, extractedVal, match }) {
 export default function LoanApplication() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { addNotification } = useNotifications();
   const [step, setStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(null);
@@ -383,8 +222,9 @@ export default function LoanApplication() {
   }, [aadhaarResult, panResult, personal.applicant_name, idFields.user_dob, idFields.user_gender, idFields.user_aadhaar, idFields.user_pan]);
 
   // Step 3: Dynamic Category Documents
-  // Keyed by `${loan_type}_${doc_id}` -> { file, preview, base64, name, size, docId, label, required }
+  // Keyed by `${loan_type}_${doc_id}` -> { file, preview, base64, name, size, docId, label, required, section, upload_status, verification_status, sha256_hash }
   const [categoryDocs, setCategoryDocs] = useState({});
+  const [previewDoc, setPreviewDoc] = useState(null);
 
   const setP = (k, v) => setPersonal((p) => ({ ...p, [k]: v }));
   const setL = (k, v) => setLoan((p) => ({ ...p, [k]: v }));
@@ -401,6 +241,65 @@ export default function LoanApplication() {
   // Dynamic config for currently selected loan type
   const currentDocConfig = LOAN_DOCUMENTS_CONFIG[loan.loan_type] || LOAN_DOCUMENTS_CONFIG.Personal;
 
+  // Auto-sync KYC Aadhaar and PAN documents into categoryDocs for the current loan type
+  useEffect(() => {
+    if (aadhaarFile) {
+      fileToBase64(aadhaarFile).then(async (b64) => {
+        const sha = await computeSHA256(aadhaarFile);
+        const docId = loan.loan_type === "Education" ? "student_aadhaar" : "aadhaar";
+        const key = `${loan.loan_type}_${docId}`;
+        setCategoryDocs((prev) => ({
+          ...prev,
+          [key]: {
+            file: aadhaarFile,
+            preview: aadhaarPreview || (aadhaarFile.type?.startsWith("image/") ? URL.createObjectURL(aadhaarFile) : ""),
+            base64: b64,
+            name: aadhaarFile.name,
+            size: aadhaarFile.size,
+            type: aadhaarFile.type,
+            docId,
+            label: "Aadhaar",
+            section: loan.loan_type === "Education" ? "Student" : "",
+            required: true,
+            sha256_hash: sha,
+            upload_status: "Uploaded",
+            verification_status: aadhaarMatched ? "Verified" : (aadhaarResult ? "Mismatch" : "Pending Verification"),
+            uploadedAt: prev[key]?.uploadedAt || new Date().toISOString(),
+          },
+        }));
+      }).catch(() => {});
+    }
+  }, [aadhaarFile, aadhaarPreview, aadhaarMatched, aadhaarResult, loan.loan_type]);
+
+  useEffect(() => {
+    if (panFile) {
+      fileToBase64(panFile).then(async (b64) => {
+        const sha = await computeSHA256(panFile);
+        const docId = loan.loan_type === "Education" ? "student_pan" : "pan";
+        const key = `${loan.loan_type}_${docId}`;
+        setCategoryDocs((prev) => ({
+          ...prev,
+          [key]: {
+            file: panFile,
+            preview: panPreview || (panFile.type?.startsWith("image/") ? URL.createObjectURL(panFile) : ""),
+            base64: b64,
+            name: panFile.name,
+            size: panFile.size,
+            type: panFile.type,
+            docId,
+            label: loan.loan_type === "Education" ? "PAN where applicable" : "PAN",
+            section: loan.loan_type === "Education" ? "Student" : "",
+            required: loan.loan_type !== "Education",
+            sha256_hash: sha,
+            upload_status: "Uploaded",
+            verification_status: panMatched ? "Verified" : (panResult ? "Mismatch" : "Pending Verification"),
+            uploadedAt: prev[key]?.uploadedAt || new Date().toISOString(),
+          },
+        }));
+      }).catch(() => {});
+    }
+  }, [panFile, panPreview, panMatched, panResult, loan.loan_type]);
+
   // Count uploaded mandatory documents
   const uploadedMandatoryCount = currentDocConfig.docs
     .filter((d) => d.required)
@@ -410,14 +309,32 @@ export default function LoanApplication() {
   // Handle Category Document Upload
   const handleCategoryDocUpload = async (docDef, file) => {
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      setError(`File "${file.name}" exceeds the maximum allowed limit of 5 MB.`);
+    if (file.size > 15 * 1024 * 1024) {
+      setError(`File "${file.name}" exceeds the maximum allowed limit of 15 MB.`);
       return;
     }
     try {
       const b64 = await fileToBase64(file);
       const isImg = file.type.startsWith("image/");
       const previewUrl = isImg ? URL.createObjectURL(file) : "";
+      const sha256 = await computeSHA256(file);
+
+      // If uploading Aadhaar or PAN in checklist, sync to KYC state
+      if (docDef.id === "aadhaar" || docDef.id === "student_aadhaar") {
+        setAadhaarFile(file);
+        setAadhaarPreview(previewUrl);
+        const currentNum = idFields.user_aadhaar.replace(/\D/g, "");
+        if (currentNum.length === 12) {
+          verifyAadhaarDoc(file, currentNum);
+        }
+      } else if (docDef.id === "pan" || docDef.id === "student_pan") {
+        setPanFile(file);
+        setPanPreview(previewUrl);
+        const currentPan = idFields.user_pan.trim().toUpperCase();
+        if (currentPan.length === 10) {
+          verifyPanDoc(file, currentPan);
+        }
+      }
 
       setCategoryDocs((prev) => ({
         ...prev,
@@ -430,7 +347,14 @@ export default function LoanApplication() {
           type: file.type,
           docId: docDef.id,
           label: docDef.label,
+          section: docDef.section || "",
           required: docDef.required,
+          sha256_hash: sha256,
+          upload_status: "Uploaded",
+          verification_status:
+            (docDef.id === "aadhaar" && aadhaarMatched) || (docDef.id === "pan" && panMatched)
+              ? "Verified"
+              : "Pending Officer Review",
           uploadedAt: new Date().toISOString(),
         },
       }));
@@ -448,7 +372,17 @@ export default function LoanApplication() {
       delete next[key];
       return next;
     });
+    if (docId === "aadhaar" || docId === "student_aadhaar") {
+      setAadhaarFile(null);
+      setAadhaarPreview("");
+      setAadhaarResult(null);
+    } else if (docId === "pan" || docId === "student_pan") {
+      setPanFile(null);
+      setPanPreview("");
+      setPanResult(null);
+    }
   };
+
 
   // Validation per step
   const validate = () => {
@@ -508,9 +442,10 @@ export default function LoanApplication() {
       );
       if (missing.length > 0) {
         return `Please upload mandatory ${loan.loan_type} Loan document(s): ${missing
-          .map((d) => d.label)
+          .map((d) => d.label + (d.section ? ` (${d.section})` : ""))
           .join(", ")}`;
       }
+
     }
     return null;
   };
@@ -564,9 +499,10 @@ export default function LoanApplication() {
     );
     if (missing.length > 0) {
       return `Please upload mandatory ${loan.loan_type} Loan document(s): ${missing
-        .map((d) => d.label)
+        .map((d) => d.label + (d.section ? ` (${d.section})` : ""))
         .join(", ")}`;
     }
+
     return null;
   };
 
@@ -739,6 +675,33 @@ export default function LoanApplication() {
     }
   };
 
+  // Explicit reload / re-check handlers for AI document verification
+  const handleRecheckAadhaar = () => {
+    if (!aadhaarFile) {
+      setError("Please attach your Aadhaar card image to check with AI.");
+      return;
+    }
+    const cleanNum = (idFields.user_aadhaar || "").replace(/\D/g, "");
+    if (cleanNum.length !== 12) {
+      setError("Please enter all 12 digits of your Aadhaar number before re-checking.");
+      return;
+    }
+    verifyAadhaarDoc(aadhaarFile, cleanNum);
+  };
+
+  const handleRecheckPan = () => {
+    if (!panFile) {
+      setError("Please attach your PAN card image to check with AI.");
+      return;
+    }
+    const cleanPan = (idFields.user_pan || "").trim().toUpperCase();
+    if (cleanPan.length !== 10) {
+      setError("Please enter all 10 characters of your PAN number before re-checking.");
+      return;
+    }
+    verifyPanDoc(panFile, cleanPan);
+  };
+
   const handleSubmit = async () => {
     const allErr = validateAll();
     if (allErr) {
@@ -757,16 +720,21 @@ export default function LoanApplication() {
           return {
             doc_id: d.id,
             label: d.label,
+            section: d.section || "",
             required: d.required,
             filename: docItem.name,
             file_size_bytes: docItem.size,
             file_size_formatted: formatFileSize(docItem.size),
             file_type: docItem.type,
             file_data: docItem.base64,
+            sha256_hash: docItem.sha256_hash || "",
+            upload_status: docItem.upload_status || "Uploaded",
+            verification_status: docItem.verification_status || (d.is_kyc ? "Verified" : "Pending Officer Review"),
             uploaded_at: docItem.uploadedAt,
           };
         })
         .filter(Boolean);
+
 
       const payload = {
         applicant_name: personal.applicant_name,
@@ -787,7 +755,15 @@ export default function LoanApplication() {
       };
 
       const res = await api.applyLoan(payload);
-      setSuccess(res.application || { _id: "APPLIED", emi, ...payload });
+      const appRecord = res.application || { _id: "APPLIED", emi, ...payload };
+      setSuccess(appRecord);
+      addNotification({
+        title: "Loan Application Submitted",
+        desc: `Your ${payload.loan_type} loan request for ₹${Number(payload.amount_requested).toLocaleString("en-IN")} has been submitted for underwriting.`,
+        type: "info",
+        link: "/approvals",
+        metadata: { loan_id: appRecord._id }
+      });
     } catch (err) {
       setError(err.message || "Failed to submit loan application.");
     } finally {
@@ -1227,7 +1203,33 @@ export default function LoanApplication() {
                   Aadhaar Card Verification
                 </span>
               </div>
-              <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {aadhaarFile && !aadhaarMatched && (
+                  <button
+                    type="button"
+                    onClick={handleRecheckAadhaar}
+                    disabled={aadhaarVerifying || idFields.user_aadhaar.replace(/\D/g, "").length !== 12}
+                    title="Re-check Aadhaar card with AI"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      padding: "4px 10px",
+                      borderRadius: 20,
+                      background: "#F0FDFA",
+                      border: "1px solid #06B6D4",
+                      color: "#0891B2",
+                      fontSize: "0.74rem",
+                      fontWeight: 700,
+                      cursor: (aadhaarVerifying || idFields.user_aadhaar.replace(/\D/g, "").length !== 12) ? "not-allowed" : "pointer",
+                      opacity: (aadhaarVerifying || idFields.user_aadhaar.replace(/\D/g, "").length !== 12) ? 0.6 : 1,
+                      transition: "all 0.2s ease",
+                    }}
+                  >
+                    <RefreshCw size={11} style={{ animation: aadhaarVerifying ? "spin 0.8s linear infinite" : "none" }} />
+                    {aadhaarVerifying ? "Scanning..." : "Re-check AI"}
+                  </button>
+                )}
                 {aadhaarVerifying ? (
                   <span className="badge" style={{ background: "#E0F2FE", color: "#0284C7", display: "inline-flex", alignItems: "center", gap: 5 }}>
                     <RefreshCw size={12} style={{ animation: "spin 0.8s linear infinite" }} /> AI OCR Scanning...
@@ -1269,7 +1271,7 @@ export default function LoanApplication() {
                     disabled={aadhaarMatched}
                     readOnly={aadhaarMatched}
                     style={{
-                      paddingRight: aadhaarMatched ? 36 : 12,
+                      paddingRight: aadhaarMatched ? 36 : aadhaarFile ? 40 : 12,
                       backgroundColor: aadhaarMatched ? "#F0FDF4" : aadhaarResult && !aadhaarResult.matched ? "#FEF2F2" : "#FFFFFF",
                       borderColor: aadhaarMatched ? "#10B981" : aadhaarResult && !aadhaarResult.matched ? "#EF4444" : "#CBD5E1",
                       color: aadhaarMatched ? "#065F46" : "#0F172A",
@@ -1284,6 +1286,37 @@ export default function LoanApplication() {
                       color="#10B981"
                       style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)" }}
                     />
+                  )}
+                  {!aadhaarMatched && aadhaarFile && (
+                    <button
+                      type="button"
+                      onClick={handleRecheckAadhaar}
+                      disabled={aadhaarVerifying || idFields.user_aadhaar.replace(/\D/g, "").length !== 12}
+                      title="Click to reload / re-check with AI"
+                      style={{
+                        position: "absolute",
+                        right: 8,
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        background: "transparent",
+                        border: "none",
+                        cursor: (aadhaarVerifying || idFields.user_aadhaar.replace(/\D/g, "").length !== 12) ? "not-allowed" : "pointer",
+                        color: aadhaarResult && !aadhaarResult.matched ? "#DC2626" : "#0891B2",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 6,
+                        borderRadius: 4,
+                      }}
+                    >
+                      <RefreshCw
+                        size={16}
+                        style={{
+                          animation: aadhaarVerifying ? "spin 0.8s linear infinite" : "none",
+                          opacity: (aadhaarVerifying || idFields.user_aadhaar.replace(/\D/g, "").length !== 12) ? 0.4 : 1,
+                        }}
+                      />
+                    </button>
                   )}
                 </div>
 
@@ -1307,20 +1340,90 @@ export default function LoanApplication() {
                 )}
 
                 {aadhaarResult && !aadhaarResult.matched && (
-                  <div style={{ marginTop: 10, padding: "8px 12px", background: "#FEE2E2", borderRadius: 8, fontSize: "0.78rem", color: "#991B1B" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700, marginBottom: 2 }}>
-                      <AlertCircle size={15} color="#DC2626" />
-                      <span>Value Mismatched — Field Remains Editable</span>
+                  <div style={{ marginTop: 10, padding: "10px 14px", background: "#FEE2E2", borderRadius: 8, fontSize: "0.78rem", color: "#991B1B", border: "1px solid #FECACA" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}>
+                        <AlertCircle size={15} color="#DC2626" />
+                        <span>Value Mismatched — Field Remains Editable</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleRecheckAadhaar}
+                        disabled={aadhaarVerifying || idFields.user_aadhaar.replace(/\D/g, "").length !== 12}
+                        title="Reload and re-check with AI"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 5,
+                          padding: "4px 10px",
+                          background: "#FFFFFF",
+                          border: "1px solid #DC2626",
+                          color: "#DC2626",
+                          borderRadius: 6,
+                          fontWeight: 700,
+                          fontSize: "0.75rem",
+                          cursor: (aadhaarVerifying || idFields.user_aadhaar.replace(/\D/g, "").length !== 12) ? "not-allowed" : "pointer",
+                          transition: "all 0.2s ease",
+                        }}
+                      >
+                        <RefreshCw size={12} style={{ animation: aadhaarVerifying ? "spin 0.8s linear infinite" : "none" }} />
+                        {aadhaarVerifying ? "Re-checking AI..." : "Re-check with AI"}
+                      </button>
                     </div>
                     <div>
                       Aadhaar card details do not match entered number. Please check the number or upload a clearer card image.
+                      {aadhaarResult.extracted_number && aadhaarResult.extracted_number !== "Not detected" && (
+                        <div style={{ marginTop: 4, color: "#7F1D1D", fontWeight: 600 }}>
+                          AI detected on card: <code style={{ background: "#FEE2E2", padding: "1px 5px", borderRadius: 4, border: "1px solid #FCA5A5" }}>{aadhaarResult.extracted_number}</code>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
 
-                {!aadhaarResult && aadhaarFile && (
+                {/* Explicit Re-check Action Button */}
+                {!aadhaarMatched && aadhaarFile && (
+                  <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      onClick={handleRecheckAadhaar}
+                      disabled={aadhaarVerifying || idFields.user_aadhaar.replace(/\D/g, "").length !== 12}
+                      className="btn"
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "7px 14px",
+                        background: aadhaarVerifying
+                          ? "#CBD5E1"
+                          : aadhaarResult && !aadhaarResult.matched
+                          ? "#DC2626"
+                          : "linear-gradient(135deg, #0891B2, #0E7490)",
+                        color: "#FFFFFF",
+                        border: "none",
+                        borderRadius: 6,
+                        fontWeight: 700,
+                        fontSize: "0.8rem",
+                        cursor: (aadhaarVerifying || idFields.user_aadhaar.replace(/\D/g, "").length !== 12) ? "not-allowed" : "pointer",
+                        opacity: (aadhaarVerifying || idFields.user_aadhaar.replace(/\D/g, "").length !== 12) ? 0.65 : 1,
+                        boxShadow: "0 2px 6px rgba(0, 0, 0, 0.1)",
+                        transition: "all 0.2s ease",
+                      }}
+                    >
+                      <RefreshCw size={13} style={{ animation: aadhaarVerifying ? "spin 0.8s linear infinite" : "none" }} />
+                      {aadhaarVerifying ? "Re-checking AI..." : "Re-check with AI"}
+                    </button>
+                    <span style={{ fontSize: "0.75rem", color: "#64748B" }}>
+                      {idFields.user_aadhaar.replace(/\D/g, "").length === 12
+                        ? "Click to re-run AI matching against attached card"
+                        : "Type 12 digits to enable AI check"}
+                    </span>
+                  </div>
+                )}
+
+                {!aadhaarResult && !aadhaarFile && (
                   <div style={{ marginTop: 8, fontSize: "0.76rem", color: "#64748B" }}>
-                    Image attached. Type 12 digits to auto-run AI matching.
+                    Upload your Aadhaar card to auto-run AI matching.
                   </div>
                 )}
               </div>
@@ -1381,8 +1484,35 @@ export default function LoanApplication() {
                         {aadhaarMatched ? "✓ Verified" : "✓ Attached"} ({aadhaarFile?.name})
                       </div>
                       {!aadhaarMatched && (
-                        <div style={{ fontSize: "0.7rem", color: "#64748B", marginTop: 2 }}>
-                          Click to upload a different image
+                        <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 6 }}>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRecheckAadhaar();
+                            }}
+                            disabled={aadhaarVerifying || idFields.user_aadhaar.replace(/\D/g, "").length !== 12}
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              gap: 5,
+                              padding: "4px 10px",
+                              borderRadius: 4,
+                              border: "1px solid #CBD5E1",
+                              background: "#FFFFFF",
+                              color: "#0891B2",
+                              fontSize: "0.73rem",
+                              fontWeight: 700,
+                              cursor: (aadhaarVerifying || idFields.user_aadhaar.replace(/\D/g, "").length !== 12) ? "not-allowed" : "pointer",
+                            }}
+                          >
+                            <RefreshCw size={11} style={{ animation: aadhaarVerifying ? "spin 0.8s linear infinite" : "none" }} />
+                            {aadhaarVerifying ? "Scanning..." : "Re-scan with AI"}
+                          </button>
+                          <div style={{ fontSize: "0.7rem", color: "#64748B" }}>
+                            Click box to upload a different image
+                          </div>
                         </div>
                       )}
                     </div>
@@ -1463,7 +1593,33 @@ export default function LoanApplication() {
                   PAN Card Verification
                 </span>
               </div>
-              <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {aadhaarMatched && panFile && !panMatched && (
+                  <button
+                    type="button"
+                    onClick={handleRecheckPan}
+                    disabled={panVerifying || idFields.user_pan.trim().length !== 10}
+                    title="Re-check PAN card with AI"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      padding: "4px 10px",
+                      borderRadius: 20,
+                      background: "#F0FDFA",
+                      border: "1px solid #06B6D4",
+                      color: "#0891B2",
+                      fontSize: "0.74rem",
+                      fontWeight: 700,
+                      cursor: (panVerifying || idFields.user_pan.trim().length !== 10) ? "not-allowed" : "pointer",
+                      opacity: (panVerifying || idFields.user_pan.trim().length !== 10) ? 0.6 : 1,
+                      transition: "all 0.2s ease",
+                    }}
+                  >
+                    <RefreshCw size={11} style={{ animation: panVerifying ? "spin 0.8s linear infinite" : "none" }} />
+                    {panVerifying ? "Scanning..." : "Re-check AI"}
+                  </button>
+                )}
                 {!aadhaarMatched ? (
                   <span className="badge" style={{ background: "#F1F5F9", color: "#94A3B8", display: "inline-flex", alignItems: "center", gap: 4 }}>
                     <Lock size={12} /> Locked
@@ -1509,7 +1665,7 @@ export default function LoanApplication() {
                     disabled={!aadhaarMatched || panMatched}
                     readOnly={panMatched}
                     style={{
-                      paddingRight: panMatched ? 36 : 12,
+                      paddingRight: panMatched ? 36 : panFile ? 40 : 12,
                       backgroundColor: panMatched ? "#F0FDF4" : panResult && !panResult.matched ? "#FEF2F2" : (!aadhaarMatched ? "#F1F5F9" : "#FFFFFF"),
                       borderColor: panMatched ? "#10B981" : panResult && !panResult.matched ? "#EF4444" : "#CBD5E1",
                       color: panMatched ? "#065F46" : "#0F172A",
@@ -1524,6 +1680,37 @@ export default function LoanApplication() {
                       color="#10B981"
                       style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)" }}
                     />
+                  )}
+                  {aadhaarMatched && !panMatched && panFile && (
+                    <button
+                      type="button"
+                      onClick={handleRecheckPan}
+                      disabled={panVerifying || idFields.user_pan.trim().length !== 10}
+                      title="Click to reload / re-check PAN with AI"
+                      style={{
+                        position: "absolute",
+                        right: 8,
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        background: "transparent",
+                        border: "none",
+                        cursor: (panVerifying || idFields.user_pan.trim().length !== 10) ? "not-allowed" : "pointer",
+                        color: panResult && !panResult.matched ? "#DC2626" : "#0891B2",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 6,
+                        borderRadius: 4,
+                      }}
+                    >
+                      <RefreshCw
+                        size={16}
+                        style={{
+                          animation: panVerifying ? "spin 0.8s linear infinite" : "none",
+                          opacity: (panVerifying || idFields.user_pan.trim().length !== 10) ? 0.4 : 1,
+                        }}
+                      />
+                    </button>
                   )}
                 </div>
 
@@ -1547,20 +1734,90 @@ export default function LoanApplication() {
                 )}
 
                 {panResult && !panResult.matched && (
-                  <div style={{ marginTop: 10, padding: "8px 12px", background: "#FEE2E2", borderRadius: 8, fontSize: "0.78rem", color: "#991B1B" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700, marginBottom: 2 }}>
-                      <AlertCircle size={15} color="#DC2626" />
-                      <span>Value Mismatched — Field Remains Editable</span>
+                  <div style={{ marginTop: 10, padding: "10px 14px", background: "#FEE2E2", borderRadius: 8, fontSize: "0.78rem", color: "#991B1B", border: "1px solid #FECACA" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}>
+                        <AlertCircle size={15} color="#DC2626" />
+                        <span>Value Mismatched — Field Remains Editable</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleRecheckPan}
+                        disabled={panVerifying || idFields.user_pan.trim().length !== 10}
+                        title="Reload and re-check with AI"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 5,
+                          padding: "4px 10px",
+                          background: "#FFFFFF",
+                          border: "1px solid #DC2626",
+                          color: "#DC2626",
+                          borderRadius: 6,
+                          fontWeight: 700,
+                          fontSize: "0.75rem",
+                          cursor: (panVerifying || idFields.user_pan.trim().length !== 10) ? "not-allowed" : "pointer",
+                          transition: "all 0.2s ease",
+                        }}
+                      >
+                        <RefreshCw size={12} style={{ animation: panVerifying ? "spin 0.8s linear infinite" : "none" }} />
+                        {panVerifying ? "Re-checking AI..." : "Re-check with AI"}
+                      </button>
                     </div>
                     <div>
                       PAN card details do not match entered number. Please check the number or upload a clearer card image.
+                      {panResult.extracted_number && panResult.extracted_number !== "Not detected" && (
+                        <div style={{ marginTop: 4, color: "#7F1D1D", fontWeight: 600 }}>
+                          AI detected on card: <code style={{ background: "#FEE2E2", padding: "1px 5px", borderRadius: 4, border: "1px solid #FCA5A5" }}>{panResult.extracted_number}</code>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
 
-                {!panResult && panFile && aadhaarMatched && (
+                {/* Explicit Re-check Action Button */}
+                {aadhaarMatched && !panMatched && panFile && (
+                  <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      onClick={handleRecheckPan}
+                      disabled={panVerifying || idFields.user_pan.trim().length !== 10}
+                      className="btn"
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "7px 14px",
+                        background: panVerifying
+                          ? "#CBD5E1"
+                          : panResult && !panResult.matched
+                          ? "#DC2626"
+                          : "linear-gradient(135deg, #0891B2, #0E7490)",
+                        color: "#FFFFFF",
+                        border: "none",
+                        borderRadius: 6,
+                        fontWeight: 700,
+                        fontSize: "0.8rem",
+                        cursor: (panVerifying || idFields.user_pan.trim().length !== 10) ? "not-allowed" : "pointer",
+                        opacity: (panVerifying || idFields.user_pan.trim().length !== 10) ? 0.65 : 1,
+                        boxShadow: "0 2px 6px rgba(0, 0, 0, 0.1)",
+                        transition: "all 0.2s ease",
+                      }}
+                    >
+                      <RefreshCw size={13} style={{ animation: panVerifying ? "spin 0.8s linear infinite" : "none" }} />
+                      {panVerifying ? "Re-checking AI..." : "Re-check with AI"}
+                    </button>
+                    <span style={{ fontSize: "0.75rem", color: "#64748B" }}>
+                      {idFields.user_pan.trim().length === 10
+                        ? "Click to re-run AI matching against attached PAN card"
+                        : "Type 10 characters to enable AI check"}
+                    </span>
+                  </div>
+                )}
+
+                {!panResult && !panFile && aadhaarMatched && (
                   <div style={{ marginTop: 8, fontSize: "0.76rem", color: "#64748B" }}>
-                    Image attached. Type 10 characters to auto-run AI matching.
+                    Upload your PAN card to auto-run AI matching.
                   </div>
                 )}
               </div>
@@ -1621,8 +1878,35 @@ export default function LoanApplication() {
                         {panMatched ? "✓ Verified" : "✓ Attached"} ({panFile?.name})
                       </div>
                       {aadhaarMatched && !panMatched && (
-                        <div style={{ fontSize: "0.7rem", color: "#64748B", marginTop: 2 }}>
-                          Click to upload a different image
+                        <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 6 }}>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRecheckPan();
+                            }}
+                            disabled={panVerifying || idFields.user_pan.trim().length !== 10}
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              gap: 5,
+                              padding: "4px 10px",
+                              borderRadius: 4,
+                              border: "1px solid #CBD5E1",
+                              background: "#FFFFFF",
+                              color: "#0891B2",
+                              fontSize: "0.73rem",
+                              fontWeight: 700,
+                              cursor: (panVerifying || idFields.user_pan.trim().length !== 10) ? "not-allowed" : "pointer",
+                            }}
+                          >
+                            <RefreshCw size={11} style={{ animation: panVerifying ? "spin 0.8s linear infinite" : "none" }} />
+                            {panVerifying ? "Scanning..." : "Re-scan with AI"}
+                          </button>
+                          <div style={{ fontSize: "0.7rem", color: "#64748B" }}>
+                            Click box to upload a different image
+                          </div>
                         </div>
                       )}
                     </div>
@@ -1757,126 +2041,491 @@ export default function LoanApplication() {
             </span>
           </div>
 
-          {/* Document Upload Cards Grid */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {currentDocConfig.docs.map((docDef) => {
-              const uploadKey = `${loan.loan_type}_${docDef.id}`;
-              const docState = categoryDocs[uploadKey];
-              const isUploaded = Boolean(docState?.file);
+          {/* Document Upload Cards Grid — Dynamically Grouped for Education Loan or Standard Checklist */}
+          {loan.loan_type === "Education" ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+              {[
+                {
+                  sectionName: "Student",
+                  sectionTitle: "🎓 Student Documents (Primary Applicant)",
+                  sectionDesc: "Official academic admissions and personal credentials of the student borrower",
+                  badgeBg: "#FAF5FF",
+                  badgeColor: "#9333EA",
+                },
+                {
+                  sectionName: "Parent / Co-borrower",
+                  sectionTitle: "👨‍👩‍👧 Parent / Co-borrower Documents (Financial Guarantor)",
+                  sectionDesc: "Income verification and banking credentials of parent or co-borrower",
+                  badgeBg: "#F0FDF4",
+                  badgeColor: "#16A34A",
+                },
+                {
+                  sectionName: "Additional",
+                  sectionTitle: "📋 Additional Documentation",
+                  sectionDesc: "Collateral and institutional security records where applicable",
+                  badgeBg: "#F8FAFC",
+                  badgeColor: "#64748B",
+                },
+              ].map((grp) => {
+                const grpDocs = currentDocConfig.docs.filter((d) => d.section === grp.sectionName);
+                if (grpDocs.length === 0) return null;
 
-              return (
-                <div
-                  key={docDef.id}
-                  style={{
-                    border: isUploaded ? "1px solid #A7F3D0" : "1px solid #E2E8F0",
-                    borderRadius: "var(--radius-md)",
-                    padding: "18px 20px",
-                    background: isUploaded ? "rgba(236, 253, 245, 0.3)" : "#FFFFFF",
-                    boxShadow: "var(--shadow-xs)",
-                    transition: "all 0.2s ease",
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, gap: 12 }}>
-                    <div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <span style={{ fontWeight: 800, fontSize: "0.95rem", color: "#0F172A" }}>
-                          {docDef.label}
+                return (
+                  <div
+                    key={grp.sectionName}
+                    style={{
+                      background: "#FFFFFF",
+                      border: "1px solid #E2E8F0",
+                      borderRadius: "var(--radius-md, 8px)",
+                      padding: "18px 20px",
+                      boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                    }}
+                  >
+                    <div style={{ marginBottom: 14, paddingBottom: 10, borderBottom: "1px solid #F1F5F9" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                        <span style={{ fontWeight: 800, fontSize: "1.05rem", color: "#0F172A" }}>
+                          {grp.sectionTitle}
                         </span>
-                        {docDef.required ? (
-                          <span
-                            style={{
-                              fontSize: "0.7rem",
-                              fontWeight: 800,
-                              color: "#DC2626",
-                              background: "#FEE2E2",
-                              padding: "2px 8px",
-                              borderRadius: "var(--radius-full)",
-                            }}
-                          >
-                            Mandatory *
-                          </span>
-                        ) : (
-                          <span
-                            style={{
-                              fontSize: "0.7rem",
-                              fontWeight: 700,
-                              color: "#64748B",
-                              background: "#F1F5F9",
-                              padding: "2px 8px",
-                              borderRadius: "var(--radius-full)",
-                            }}
-                          >
-                            Optional
-                          </span>
-                        )}
+                        <span
+                          className="badge"
+                          style={{
+                            background: grp.badgeBg,
+                            color: grp.badgeColor,
+                            fontWeight: 700,
+                            fontSize: "0.72rem",
+                          }}
+                        >
+                          {grpDocs.filter((d) => categoryDocs[`${loan.loan_type}_${d.id}`]?.file).length} / {grpDocs.length} Uploaded
+                        </span>
                       </div>
-                      <div style={{ fontSize: "0.8rem", color: "#64748B", marginTop: 4 }}>
-                        {docDef.description}
-                      </div>
+                      <p style={{ color: "#64748B", fontSize: "0.8rem", margin: "4px 0 0 0" }}>
+                        {grp.sectionDesc}
+                      </p>
                     </div>
 
-                    {isUploaded && (
-                      <span className="badge badge-approved" style={{ fontSize: "0.75rem", flexShrink: 0 }}>
-                        <CheckCircle size={13} /> Attached
-                      </span>
-                    )}
-                  </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                      {grpDocs.map((docDef) => {
+                        const uploadKey = `${loan.loan_type}_${docDef.id}`;
+                        const docState = categoryDocs[uploadKey];
+                        const isUploaded = Boolean(docState?.file);
+                        const isVerified =
+                          docState?.verification_status === "Verified" ||
+                          (docDef.is_kyc && ((docDef.id === "student_aadhaar" && aadhaarMatched) || (docDef.id === "student_pan" && panMatched)));
+                        const isMismatch =
+                          docState?.verification_status === "Mismatch" ||
+                          (docDef.is_kyc && ((docDef.id === "student_aadhaar" && aadhaarResult && !aadhaarResult.matched) || (docDef.id === "student_pan" && panResult && !panResult.matched)));
+                        const isRejected = docState?.verification_status === "Rejected";
 
-                  {/* Upload Controls or Attached File Preview */}
-                  {isUploaded ? (
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        background: "#FFFFFF",
-                        border: "1px solid #CBD5E1",
-                        borderRadius: "var(--radius-sm)",
-                        padding: "10px 14px",
-                        marginTop: 12,
-                        gap: 12,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-                        {docState.preview ? (
-                          <img
-                            src={docState.preview}
-                            alt="preview"
-                            style={{ width: 44, height: 44, borderRadius: 6, objectFit: "cover", border: "1px solid #E2E8F0" }}
-                          />
-                        ) : (
+                        return (
                           <div
+                            key={docDef.id}
                             style={{
-                              width: 44,
-                              height: 44,
-                              borderRadius: 6,
-                              background: "#EEF2FF",
-                              color: "#6366F1",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
+                              border: isUploaded ? "1px solid #A7F3D0" : "1px solid #E2E8F0",
+                              borderRadius: "var(--radius-sm, 6px)",
+                              padding: "14px 16px",
+                              background: isUploaded ? "rgba(236, 253, 245, 0.4)" : "#F8FAFC",
+                              transition: "all 0.2s ease",
                             }}
                           >
-                            <FileText size={20} />
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6, gap: 10, flexWrap: "wrap" }}>
+                              <div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                  <span style={{ fontWeight: 800, fontSize: "0.92rem", color: "#0F172A" }}>
+                                    {docDef.label}
+                                  </span>
+                                  {docDef.required ? (
+                                    <span
+                                      className="badge"
+                                      style={{
+                                        fontSize: "0.68rem",
+                                        fontWeight: 800,
+                                        color: "#DC2626",
+                                        background: "#FEE2E2",
+                                        border: "1px solid #FECACA",
+                                        padding: "1px 7px",
+                                      }}
+                                    >
+                                      Required *
+                                    </span>
+                                  ) : (
+                                    <span
+                                      className="badge"
+                                      style={{
+                                        fontSize: "0.68rem",
+                                        fontWeight: 700,
+                                        color: "#64748B",
+                                        background: "#F1F5F9",
+                                        border: "1px solid #E2E8F0",
+                                        padding: "1px 7px",
+                                      }}
+                                    >
+                                      Optional (Where applicable)
+                                    </span>
+                                  )}
+                                </div>
+                                <div style={{ fontSize: "0.78rem", color: "#64748B", marginTop: 3 }}>
+                                  {docDef.description}
+                                </div>
+                              </div>
+
+                              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                                {/* Upload Status Badge */}
+                                {isUploaded ? (
+                                  <span className="badge badge-approved" style={{ fontSize: "0.72rem", padding: "3px 8px", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                    <CheckCircle size={11} /> Uploaded
+                                  </span>
+                                ) : (
+                                  <span className="badge" style={{ fontSize: "0.72rem", background: "#F1F5F9", color: "#64748B", padding: "3px 8px" }}>
+                                    Not Uploaded
+                                  </span>
+                                )}
+
+                                {/* Verification Status Badge */}
+                                {isVerified ? (
+                                  <span className="badge badge-approved" style={{ fontSize: "0.72rem", padding: "3px 8px", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                    <ShieldCheck size={11} /> Verified
+                                  </span>
+                                ) : isMismatch ? (
+                                  <span className="badge badge-rejected" style={{ fontSize: "0.72rem", padding: "3px 8px", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                    <AlertCircle size={11} /> Value Mismatch
+                                  </span>
+                                ) : isRejected ? (
+                                  <span className="badge badge-rejected" style={{ fontSize: "0.72rem", padding: "3px 8px", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                    <XCircle size={11} /> Rejected
+                                  </span>
+                                ) : isUploaded ? (
+                                  <span className="badge" style={{ fontSize: "0.72rem", background: "#FEF3C7", color: "#B45309", padding: "3px 8px", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                    <Clock size={11} /> Pending Review
+                                  </span>
+                                ) : (
+                                  <span className="badge" style={{ fontSize: "0.72rem", background: "#F8FAFC", color: "#94A3B8", padding: "3px 8px" }}>
+                                    Pending Upload
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Uploaded File Controls vs Upload Dropzone */}
+                            {isUploaded ? (
+                              <div
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "space-between",
+                                  background: "#FFFFFF",
+                                  border: "1px solid #CBD5E1",
+                                  borderRadius: "var(--radius-sm)",
+                                  padding: "8px 12px",
+                                  marginTop: 8,
+                                  gap: 10,
+                                  flexWrap: "wrap",
+                                }}
+                              >
+                                <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                                  {docState.preview ? (
+                                    <img
+                                      src={docState.preview}
+                                      alt="preview"
+                                      style={{ width: 40, height: 40, borderRadius: 4, objectFit: "cover", border: "1px solid #E2E8F0" }}
+                                    />
+                                  ) : (
+                                    <div
+                                      style={{
+                                        width: 40,
+                                        height: 40,
+                                        borderRadius: 4,
+                                        background: "#EEF2FF",
+                                        color: "#6366F1",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                      }}
+                                    >
+                                      <FileText size={18} />
+                                    </div>
+                                  )}
+                                  <div style={{ minWidth: 0 }}>
+                                    <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "#0F172A", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
+                                      {docState.name}
+                                    </div>
+                                    <div style={{ fontSize: "0.72rem", color: "#64748B", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                                      <span>{formatFileSize(docState.size)}</span>
+                                      <span>•</span>
+                                      <span>{docState.type || "Document"}</span>
+                                      {docState.sha256_hash && (
+                                        <span style={{ fontSize: "0.68rem", color: "#0891B2", background: "#ECFEFF", padding: "1px 5px", borderRadius: 4, fontFamily: "monospace" }}>
+                                          SHA-256: {docState.sha256_hash.substring(0, 12)}...
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                  <button
+                                    type="button"
+                                    className="btn btn-ghost btn-sm"
+                                    onClick={() => setPreviewDoc(docState)}
+                                    style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "0.76rem" }}
+                                  >
+                                    <Eye size={12} /> Preview
+                                  </button>
+                                  <label
+                                    className="btn btn-ghost btn-sm"
+                                    style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, fontSize: "0.76rem" }}
+                                  >
+                                    <UploadCloud size={12} /> Replace
+                                    <input
+                                      type="file"
+                                      accept={docDef.accept}
+                                      style={{ display: "none" }}
+                                      onChange={(e) => {
+                                        const f = e.target.files?.[0];
+                                        if (f) handleCategoryDocUpload(docDef, f);
+                                      }}
+                                    />
+                                  </label>
+                                  <button
+                                    type="button"
+                                    className="btn btn-ghost btn-sm"
+                                    style={{ color: "#EF4444", fontSize: "0.76rem" }}
+                                    onClick={() => handleRemoveCategoryDoc(docDef.id)}
+                                  >
+                                    <Trash2 size={12} /> Remove
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                                <label
+                                  className="btn btn-primary btn-sm"
+                                  style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.8rem" }}
+                                >
+                                  <UploadCloud size={13} /> Upload {docDef.label}
+                                  <input
+                                    type="file"
+                                    accept={docDef.accept}
+                                    style={{ display: "none" }}
+                                    onChange={(e) => {
+                                      const f = e.target.files?.[0];
+                                      if (f) handleCategoryDocUpload(docDef, f);
+                                    }}
+                                  />
+                                </label>
+                                <span style={{ fontSize: "0.74rem", color: "#64748B" }}>
+                                  Supports PDF, JPG/JPEG, PNG (Max 15MB)
+                                </span>
+                              </div>
+                            )}
                           </div>
-                        )}
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontSize: "0.86rem", fontWeight: 700, color: "#0F172A", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
-                            {docState.name}
-                          </div>
-                          <div style={{ fontSize: "0.75rem", color: "#64748B" }}>
-                            {formatFileSize(docState.size)} • {docState.type || "Document"}
-                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {currentDocConfig.docs.map((docDef) => {
+                const uploadKey = `${loan.loan_type}_${docDef.id}`;
+                const docState = categoryDocs[uploadKey];
+                const isUploaded = Boolean(docState?.file);
+                const isVerified =
+                  docState?.verification_status === "Verified" ||
+                  (docDef.is_kyc && ((docDef.id === "aadhaar" && aadhaarMatched) || (docDef.id === "pan" && panMatched)));
+                const isMismatch =
+                  docState?.verification_status === "Mismatch" ||
+                  (docDef.is_kyc && ((docDef.id === "aadhaar" && aadhaarResult && !aadhaarResult.matched) || (docDef.id === "pan" && panResult && !panResult.matched)));
+                const isRejected = docState?.verification_status === "Rejected";
+
+                return (
+                  <div
+                    key={docDef.id}
+                    style={{
+                      border: isUploaded ? "1px solid #A7F3D0" : "1px solid #E2E8F0",
+                      borderRadius: "var(--radius-md, 8px)",
+                      padding: "16px 18px",
+                      background: isUploaded ? "rgba(236, 253, 245, 0.4)" : "#FFFFFF",
+                      boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
+                      transition: "all 0.2s ease",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, gap: 10, flexWrap: "wrap" }}>
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <span style={{ fontWeight: 800, fontSize: "0.95rem", color: "#0F172A" }}>
+                            {docDef.label}
+                          </span>
+                          {docDef.required ? (
+                            <span
+                              className="badge"
+                              style={{
+                                fontSize: "0.7rem",
+                                fontWeight: 800,
+                                color: "#DC2626",
+                                background: "#FEE2E2",
+                                border: "1px solid #FECACA",
+                                padding: "2px 8px",
+                              }}
+                            >
+                              Required *
+                            </span>
+                          ) : (
+                            <span
+                              className="badge"
+                              style={{
+                                fontSize: "0.7rem",
+                                fontWeight: 700,
+                                color: "#64748B",
+                                background: "#F1F5F9",
+                                border: "1px solid #E2E8F0",
+                                padding: "2px 8px",
+                              }}
+                            >
+                              Optional (Where applicable)
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: "0.8rem", color: "#64748B", marginTop: 4 }}>
+                          {docDef.description}
                         </div>
                       </div>
 
-                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                        {/* Upload Status Badge */}
+                        {isUploaded ? (
+                          <span className="badge badge-approved" style={{ fontSize: "0.74rem", padding: "3px 9px", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            <CheckCircle size={12} /> Uploaded
+                          </span>
+                        ) : (
+                          <span className="badge" style={{ fontSize: "0.74rem", background: "#F1F5F9", color: "#64748B", padding: "3px 9px" }}>
+                            Not Uploaded
+                          </span>
+                        )}
+
+                        {/* Verification Status Badge */}
+                        {isVerified ? (
+                          <span className="badge badge-approved" style={{ fontSize: "0.74rem", padding: "3px 9px", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            <ShieldCheck size={12} /> Verified
+                          </span>
+                        ) : isMismatch ? (
+                          <span className="badge badge-rejected" style={{ fontSize: "0.74rem", padding: "3px 9px", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            <AlertCircle size={12} /> Value Mismatch
+                          </span>
+                        ) : isRejected ? (
+                          <span className="badge badge-rejected" style={{ fontSize: "0.74rem", padding: "3px 9px", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            <XCircle size={12} /> Rejected
+                          </span>
+                        ) : isUploaded ? (
+                          <span className="badge" style={{ fontSize: "0.74rem", background: "#FEF3C7", color: "#B45309", padding: "3px 9px", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            <Clock size={12} /> Pending Review
+                          </span>
+                        ) : (
+                          <span className="badge" style={{ fontSize: "0.74rem", background: "#F8FAFC", color: "#94A3B8", padding: "3px 9px" }}>
+                            Pending Upload
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Upload Controls or Attached File Preview */}
+                    {isUploaded ? (
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          background: "#FFFFFF",
+                          border: "1px solid #CBD5E1",
+                          borderRadius: "var(--radius-sm)",
+                          padding: "10px 14px",
+                          marginTop: 10,
+                          gap: 12,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                          {docState.preview ? (
+                            <img
+                              src={docState.preview}
+                              alt="preview"
+                              style={{ width: 44, height: 44, borderRadius: 6, objectFit: "cover", border: "1px solid #E2E8F0" }}
+                            />
+                          ) : (
+                            <div
+                              style={{
+                                width: 44,
+                                height: 44,
+                                borderRadius: 6,
+                                background: "#EEF2FF",
+                                color: "#6366F1",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                              }}
+                            >
+                              <FileText size={20} />
+                            </div>
+                          )}
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: "0.86rem", fontWeight: 700, color: "#0F172A", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
+                              {docState.name}
+                            </div>
+                            <div style={{ fontSize: "0.74rem", color: "#64748B", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                              <span>{formatFileSize(docState.size)}</span>
+                              <span>•</span>
+                              <span>{docState.type || "Document"}</span>
+                              {docState.sha256_hash && (
+                                <span style={{ fontSize: "0.68rem", color: "#0891B2", background: "#ECFEFF", padding: "1px 6px", borderRadius: 4, fontFamily: "monospace" }}>
+                                  SHA-256: {docState.sha256_hash.substring(0, 14)}...
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => setPreviewDoc(docState)}
+                            style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+                          >
+                            <Eye size={13} /> Preview
+                          </button>
+                          <label
+                            className="btn btn-ghost btn-sm"
+                            style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}
+                          >
+                            <UploadCloud size={13} /> Replace
+                            <input
+                              type="file"
+                              accept={docDef.accept}
+                              style={{ display: "none" }}
+                              onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) handleCategoryDocUpload(docDef, f);
+                              }}
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            style={{ color: "#EF4444" }}
+                            onClick={() => handleRemoveCategoryDoc(docDef.id)}
+                          >
+                            <Trash2 size={13} /> Remove
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                         <label
-                          className="btn btn-ghost btn-sm"
-                          style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}
+                          className="btn btn-primary btn-sm"
+                          style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
                         >
-                          <UploadCloud size={13} /> Replace
+                          <UploadCloud size={14} /> Upload {docDef.label}
                           <input
                             type="file"
                             accept={docDef.accept}
@@ -1887,61 +2536,63 @@ export default function LoanApplication() {
                             }}
                           />
                         </label>
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm"
-                          style={{ color: "#EF4444" }}
-                          onClick={() => handleRemoveCategoryDoc(docDef.id)}
-                        >
-                          <Trash2 size={13} /> Remove
-                        </button>
+                        <span style={{ fontSize: "0.75rem", color: "#64748B" }}>
+                          Supports PDF, JPG/JPEG, PNG (Max 15MB) • Upload individually
+                        </span>
                       </div>
-                    </div>
-                  ) : (
-                    <label
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: 6,
-                        border: "2px dashed #CBD5E1",
-                        borderRadius: "var(--radius-sm)",
-                        padding: "18px 14px",
-                        marginTop: 12,
-                        background: "#F8FAFC",
-                        cursor: "pointer",
-                        transition: "all 0.2s ease",
-                      }}
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        const f = e.dataTransfer.files?.[0];
-                        if (f) handleCategoryDocUpload(docDef, f);
-                      }}
-                    >
-                      <input
-                        type="file"
-                        accept={docDef.accept}
-                        style={{ display: "none" }}
-                        onChange={(e) => {
-                          const f = e.target.files?.[0];
-                          if (f) handleCategoryDocUpload(docDef, f);
-                        }}
-                      />
-                      <UploadCloud size={24} color="#0891B2" />
-                      <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "#0F172A" }}>
-                        Click to upload or drag & drop {docDef.label}
-                      </div>
-                      <div style={{ fontSize: "0.74rem", color: "#94A3B8" }}>
-                        Supports JPG, PNG, WebP, or PDF (Max 15MB)
-                      </div>
-                    </label>
-                  )}
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* In-Page Document Preview Modal */}
+          {previewDoc && (
+            <div className="modal-overlay" style={{ zIndex: 1200 }}>
+              <div className="modal" style={{ width: "min(720px, 95vw)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                  <div>
+                    <h3 style={{ fontSize: "1.1rem", margin: 0, color: "#0F172A" }}>
+                      {previewDoc.label} {previewDoc.section ? `(${previewDoc.section})` : ""}
+                    </h3>
+                    <p style={{ color: "#64748B", fontSize: "0.78rem", margin: "2px 0 0 0" }}>
+                      {previewDoc.name} • {formatFileSize(previewDoc.size)}
+                    </p>
+                  </div>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setPreviewDoc(null)}>✕ Close</button>
                 </div>
-              );
-            })}
-          </div>
+
+                {previewDoc.preview || (previewDoc.base64?.startsWith("data:image/")) ? (
+                  <div style={{ textAlign: "center", background: "#0F172A", padding: 14, borderRadius: 8 }}>
+                    <img
+                      src={previewDoc.preview || previewDoc.base64}
+                      alt={previewDoc.name}
+                      style={{ maxHeight: 420, maxWidth: "100%", objectFit: "contain", borderRadius: 6, background: "#FFFFFF", padding: 4 }}
+                    />
+                  </div>
+                ) : (
+                  <div style={{ textAlign: "center", padding: "36px 20px", background: "#F8FAFC", borderRadius: 8, border: "1px solid #E2E8F0" }}>
+                    <FileText size={52} color="#0891B2" style={{ margin: "0 auto 12px" }} />
+                    <p style={{ fontWeight: 800, color: "#0F172A", marginBottom: 4, fontSize: "0.95rem" }}>{previewDoc.name}</p>
+                    <p style={{ fontSize: "0.82rem", color: "#64748B", marginBottom: 18 }}>
+                      PDF Document Attachment ({formatFileSize(previewDoc.size)})
+                    </p>
+                    {previewDoc.base64 && (
+                      <a href={previewDoc.base64} download={previewDoc.name} className="btn btn-accent btn-sm">
+                        <Download size={14} /> Download {previewDoc.name}
+                      </a>
+                    )}
+                  </div>
+                )}
+
+                <div className="modal-footer" style={{ marginTop: 16 }}>
+                  <button className="btn btn-ghost" onClick={() => setPreviewDoc(null)}>Close Preview</button>
+                </div>
+              </div>
+            </div>
+          )}
+
 
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: 26 }}>
             <button className="btn btn-ghost" onClick={handleBack}>

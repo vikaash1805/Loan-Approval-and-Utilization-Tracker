@@ -102,6 +102,18 @@ export const api = {
 
   getAmortization: (loanId) => request(`${BASE}/applications/${loanId}/amortization`),
 
+  updateDocumentStatus: (loanId, docId, body) =>
+    request(`${BASE}/applications/${loanId}/documents/${docId}/status`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  requestAdditionalDocument: (loanId, body) =>
+    request(`${BASE}/applications/${loanId}/request-document`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   // ──────────────────────────────────────────────────────────────
   // Document verification — calls existing /verify endpoint (app.py)
   // formData must contain: user_name, user_dob, user_gender,
@@ -187,6 +199,35 @@ export const api = {
       }
       throw err;
     }
+  },
+
+  // ──────────────────────────────────────────────────────────────
+  // Notifications API
+  // ──────────────────────────────────────────────────────────────
+  getNotifications: (params = {}) => {
+    const q = new URLSearchParams(
+      Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ""))
+    ).toString();
+    return request(`${BASE}/notifications${q ? "?" + q : ""}`);
+  },
+
+  postNotification: (body) =>
+    request(`${BASE}/notifications`, { method: "POST", body: JSON.stringify(body) }),
+
+  markNotificationRead: (id) =>
+    request(`${BASE}/notifications/${id}/read`, { method: "PUT" }),
+
+  markAllNotificationsRead: (body = {}) =>
+    request(`${BASE}/notifications/read-all`, { method: "PUT", body: JSON.stringify(body) }),
+
+  deleteNotification: (id) =>
+    request(`${BASE}/notifications/${id}`, { method: "DELETE" }),
+
+  clearAllNotifications: (params = {}) => {
+    const q = new URLSearchParams(
+      Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ""))
+    ).toString();
+    return request(`${BASE}/notifications${q ? "?" + q : ""}`, { method: "DELETE" });
   },
 };
 

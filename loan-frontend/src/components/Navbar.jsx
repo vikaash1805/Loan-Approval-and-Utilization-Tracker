@@ -1,4 +1,4 @@
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import {
   LayoutDashboard,
@@ -6,20 +6,14 @@ import {
   CheckSquare,
   TrendingUp,
   CreditCard,
-  LogOut,
   User,
   ShieldCheck,
+  X,
 } from "lucide-react";
 import fundmatrixLogo from "../assets/fundmatrix_logo.png";
 
-export default function Navbar() {
-  const { user, logout, isOfficer } = useAuth();
-  const navigate = useNavigate();
-
-  const handleLogout = () => {
-    logout();
-    navigate("/login");
-  };
+export default function Navbar({ isOpen, onClose }) {
+  const { user, isOfficer } = useAuth();
 
   // Nav links tailored by role
   const navItems = isOfficer
@@ -46,164 +40,153 @@ export default function Navbar() {
       .toUpperCase();
   };
 
-  return (
-    <aside className="app-sidebar">
-      {/* Brand Header */}
-      <div className="sidebar-logo-container" style={{ padding: "8px 20px 16px" }}>
-        <img
-          src={fundmatrixLogo}
-          alt="FUNDMATRIX"
-          style={{
-            height: 32,
-            width: "auto",
-            maxWidth: "100%",
-            objectFit: "contain",
-            objectPosition: "left",
-            display: "block",
-          }}
-        />
-      </div>
+  const handleLinkClick = () => {
+    if (onClose) onClose();
+  };
 
-      {/* User Profile Card */}
-      {user && (
-        <div className="sidebar-user-card">
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div
-              style={{
-                width: 36,
-                height: 36,
-                borderRadius: "50%",
-                background: isOfficer
-                  ? "linear-gradient(135deg, #10B981 0%, #059669 100%)"
-                  : "linear-gradient(135deg, #06B6D4 0%, #0891B2 100%)",
-                color: "#FFFFFF",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontWeight: 800,
-                fontSize: "0.85rem",
-                boxShadow: isOfficer
-                  ? "0 2px 8px rgba(16, 185, 129, 0.3)"
-                  : "0 2px 8px rgba(6, 182, 212, 0.3)",
-                flexShrink: 0,
-              }}
-            >
-              {getInitials(user.name)}
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="sidebar-user-name" title={user.name}>
-                {user.name}
-              </div>
+  return (
+    <>
+      {/* Mobile backdrop */}
+      {isOpen && <div className="sidebar-backdrop" onClick={onClose} />}
+
+      <aside className={`app-sidebar ${isOpen ? "open" : ""}`}>
+        {/* Brand Header */}
+        <div className="sidebar-logo-container" style={{ padding: "8px 20px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <img
+            src={fundmatrixLogo}
+            alt="FUNDMATRIX"
+            style={{
+              height: 32,
+              width: "auto",
+              maxWidth: "100%",
+              objectFit: "contain",
+              objectPosition: "left",
+              display: "block",
+            }}
+          />
+          {/* Mobile close button */}
+          <button
+            className="sidebar-close-btn"
+            onClick={onClose}
+            aria-label="Close sidebar"
+            title="Close sidebar"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* User Profile Card */}
+        {user && (
+          <div className="sidebar-user-card">
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div
                 style={{
-                  fontSize: "0.72rem",
-                  color: "#64748B",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
+                  width: 36,
+                  height: 36,
+                  borderRadius: "50%",
+                  background: isOfficer
+                    ? "linear-gradient(135deg, #10B981 0%, #059669 100%)"
+                    : "linear-gradient(135deg, #06B6D4 0%, #0891B2 100%)",
+                  color: "#FFFFFF",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: 800,
+                  fontSize: "0.85rem",
+                  boxShadow: isOfficer
+                    ? "0 2px 8px rgba(16, 185, 129, 0.3)"
+                    : "0 2px 8px rgba(6, 182, 212, 0.3)",
+                  flexShrink: 0,
                 }}
-                title={user.email}
               >
-                {user.email}
+                {getInitials(user.name)}
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
-                <span
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="sidebar-user-name" title={user.name}>
+                  {user.name}
+                </div>
+                <div
                   style={{
-                    fontSize: "0.68rem",
-                    fontWeight: 700,
-                    color: "#059669",
-                    background: "#ECFDF5",
-                    border: "1px solid #A7F3D0",
-                    padding: "1px 6px",
-                    borderRadius: 10,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 3,
+                    fontSize: "0.72rem",
+                    color: "var(--text-muted)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
                   }}
-                  title="Email Verified via 6-Digit OTP"
+                  title={user.email}
                 >
-                  <ShieldCheck size={11} /> Email Verified
-                </span>
+                  {user.email}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
+                  <span
+                    style={{
+                      fontSize: "0.68rem",
+                      fontWeight: 700,
+                      color: "#059669",
+                      background: "rgba(16, 185, 129, 0.12)",
+                      border: "1px solid rgba(16, 185, 129, 0.3)",
+                      padding: "1px 6px",
+                      borderRadius: 10,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 3,
+                    }}
+                    title="Email Verified via 6-Digit OTP"
+                  >
+                    <ShieldCheck size={11} /> Email Verified
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginTop: 10,
-              paddingTop: 8,
-              borderTop: "1px solid #E2E8F0",
-            }}
-          >
-            <span
+            <div
               style={{
-                fontSize: "0.68rem",
-                padding: "2px 8px",
-                borderRadius: 12,
-                fontWeight: 700,
-                background: isOfficer ? "#DCFCE7" : "#ECFEFF",
-                color: isOfficer ? "#15803D" : "#0891B2",
-                border: `1px solid ${isOfficer ? "#BBF7D0" : "#A5F3FC"}`,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-              }}
-            >
-              {isOfficer ? <ShieldCheck size={11} /> : <User size={11} />}
-              {isOfficer ? "Loan Officer" : "Customer"}
-            </span>
-
-            <button
-              onClick={handleLogout}
-              title="Logout session"
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "#64748B",
-                cursor: "pointer",
-                padding: "2px 6px",
-                borderRadius: 6,
                 display: "flex",
                 alignItems: "center",
-                gap: 4,
-                fontSize: "0.74rem",
-                fontWeight: 600,
-                transition: "all 0.2s ease",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.color = "#EF4444";
-                e.currentTarget.style.background = "#FEF2F2";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.color = "#64748B";
-                e.currentTarget.style.background = "transparent";
+                marginTop: 10,
+                paddingTop: 8,
+                borderTop: "1px solid var(--border)",
               }}
             >
-              <LogOut size={12} /> Sign Out
-            </button>
+              <span
+                style={{
+                  fontSize: "0.68rem",
+                  padding: "2px 8px",
+                  borderRadius: 12,
+                  fontWeight: 700,
+                  background: isOfficer ? "rgba(16, 185, 129, 0.15)" : "rgba(6, 182, 212, 0.15)",
+                  color: isOfficer ? "#10B981" : "var(--accent)",
+                  border: `1px solid ${isOfficer ? "rgba(16, 185, 129, 0.3)" : "var(--accent-border)"}`,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
+                {isOfficer ? <ShieldCheck size={11} /> : <User size={11} />}
+                {isOfficer ? "Loan Officer" : "Customer"}
+              </span>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Navigation */}
-      <nav className="sidebar-nav">
-        {navItems.map(({ to, icon: Icon, label }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={to === "/"}
-            className={({ isActive }) =>
-              `sidebar-nav-link ${isActive ? "active" : ""}`
-            }
-          >
-            <Icon size={18} />
-            <span style={{ flex: 1 }}>{label}</span>
-          </NavLink>
-        ))}
-      </nav>
-    </aside>
+        {/* Navigation */}
+        <nav className="sidebar-nav">
+          {navItems.map(({ to, icon: Icon, label }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={to === "/"}
+              onClick={handleLinkClick}
+              className={({ isActive }) =>
+                `sidebar-nav-link ${isActive ? "active" : ""}`
+              }
+            >
+              <Icon size={18} />
+              <span style={{ flex: 1 }}>{label}</span>
+            </NavLink>
+          ))}
+        </nav>
+      </aside>
+    </>
   );
 }

@@ -23,18 +23,8 @@ from typing import Optional, List
 
 from pymongo import MongoClient
 
-
-# ============================================================
-# FLASK APPLICATION
-# ============================================================
-
 app = Flask(__name__)
 CORS(app)
-
-
-# ============================================================
-# MONGODB CONFIGURATION & HELPERS
-# ============================================================
 
 MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
 FALLBACK_DB_FILE = os.path.join(os.path.dirname(__file__), "local_image_db.json")

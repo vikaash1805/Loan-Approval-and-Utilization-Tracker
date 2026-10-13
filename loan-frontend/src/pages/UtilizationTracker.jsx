@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useNotifications } from "../context/NotificationContext";
 import { api } from "../api/loanApi";
 import {
   AreaChart,
@@ -76,6 +77,7 @@ export default function UtilizationTracker() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, isOfficer } = useAuth();
+  const { addNotification, refreshNotifications } = useNotifications();
 
   const initialLoanId = location.state?.loanId || "";
   const initialName = location.state?.name || "";
@@ -213,6 +215,13 @@ export default function UtilizationTracker() {
       };
 
       await api.recordUtilization(payload);
+      addNotification({
+        title: `Drawdown Recorded: ₹${parseFloat(form.amount).toLocaleString("en-IN")}`,
+        desc: `Expense of ₹${parseFloat(form.amount).toLocaleString("en-IN")} for ${form.category} recorded successfully.`,
+        type: "info",
+        link: "/utilization"
+      });
+      refreshNotifications();
       setFormMsg("✓ Utilization event & invoice proof recorded successfully!");
       setTimeout(() => {
         setShowForm(false);

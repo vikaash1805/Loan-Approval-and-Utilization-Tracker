@@ -248,6 +248,30 @@ def apply_loan():
     result = db["loan_applications"].insert_one(application)
     application["_id"] = str(result.inserted_id)
 
+    # Automatically dispatch notifications
+    try:
+        loan_ref = application["_id"][:8]
+        create_notification(
+            email=email,
+            title="Loan Application Submitted",
+            desc=f"Your {data['loan_type']} loan application for ₹{amount:,.0f} has been submitted for underwriting review (Ref #{loan_ref}).",
+            n_type="info",
+            link="/approvals",
+            role="user",
+            metadata={"loan_id": application["_id"]}
+        )
+        create_notification(
+            email="",
+            title="New Loan Application Received",
+            desc=f"New application from {applicant_name} for ₹{amount:,.0f} ({data['loan_type']} Loan) awaiting approval.",
+            n_type="info",
+            link="/approvals",
+            role="officer",
+            metadata={"loan_id": application["_id"]}
+        )
+    except Exception as e:
+        print(f"[loan_routes] Notification error on apply: {e}")
+
     return jsonify({
         "success": True,
         "message": "Loan application submitted successfully.",
@@ -411,11 +435,218 @@ def update_status(loan_id):
     db["loan_applications"].update_one({"_id": oid}, {"$set": update_fields})
     updated = serialize(db["loan_applications"].find_one({"_id": oid}))
 
+    # Automatically dispatch notifications for status changes
+    try:
+        app_email = doc.get("email", "")
+        loan_ref = str(loan_id)[:8]
+        if new_status == "Approved":
+            amt = update_fields.get("approved_amount") or doc.get("amount_requested") or 0
+            create_notification(
+                email=app_email,
+                title="Loan Application Approved! 🎉",
+                desc=f"Congratulations! Your {doc.get('loan_type', 'Loan')} application for ₹{amt:,.0f} has been APPROVED by the loan officer.",
+                n_type="success",
+                link="/approvals",
+                role="user",
+                metadata={"loan_id": str(loan_id)}
+            )
+        elif new_status == "Rejected":
+            create_notification(
+                email=app_email,
+                title="Loan Application Update",
+                desc=f"Your loan application has been rejected. Underwriter remarks: {notes or 'Does not meet eligibility criteria.'}",
+                n_type="error",
+                link="/approvals",
+                role="user",
+                metadata={"loan_id": str(loan_id)}
+            )
+        elif new_status == "Disbursed":
+            amt = float(doc.get("approved_amount") or doc.get("amount_requested") or 0)
+            create_notification(
+                email=app_email,
+                title="Funds Disbursed to Account 💸",
+                desc=f"₹{amt:,.0f} has been disbursed and credited to your loan facility. You can now draw down funds and upload utilization invoices.",
+                n_type="success",
+                link="/utilization",
+                role="user",
+                metadata={"loan_id": str(loan_id)}
+            )
+        elif new_status == "Closed":
+            create_notification(
+                email=app_email,
+                title="Loan Facility Closed",
+                desc=f"Loan #{loan_ref} has been fully settled and closed.",
+                n_type="info",
+                link="/repay",
+                role="user",
+                metadata={"loan_id": str(loan_id)}
+            )
+    except Exception as e:
+        print(f"[loan_routes] Notification error on update_status: {e}")
+
     return jsonify({
         "success": True,
         "message": f"Loan status updated to '{new_status}'.",
         "application": updated
     })
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ROUTE 4B - Update Individual Document Status (Verify / Reject)
+# PUT /loan/applications/<loan_id>/documents/<doc_id>/status
+# ═══════════════════════════════════════════════════════════════════
+@loan_bp.route("/applications/<loan_id>/documents/<doc_id>/status", methods=["PUT"])
+def update_document_status(loan_id, doc_id):
+    oid = valid_object_id(loan_id)
+    if oid is None:
+        return jsonify({"success": False, "error": "Invalid loan ID format."}), 400
+
+    data = request.get_json(silent=True) or {}
+    status = data.get("status")  # "Verified", "Rejected", "Pending"
+    notes = str(data.get("notes", "")).strip()
+
+    valid_statuses = {"Verified", "Rejected", "Pending"}
+    if status not in valid_statuses:
+        return jsonify({"success": False, "error": f"Status must be one of: {', '.join(sorted(valid_statuses))}"}), 400
+
+    db = get_loan_db()
+    if db is None:
+        return jsonify({"success": False, "error": "Database unavailable."}), 503
+
+    doc = db["loan_applications"].find_one({"_id": oid})
+    if doc is None:
+        return jsonify({"success": False, "error": "Loan application not found."}), 404
+
+    loan_docs = list(doc.get("loan_documents", []))
+    doc_found = False
+    doc_label = doc_id
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for d in loan_docs:
+        if d.get("doc_id") == doc_id or (d.get("label") and str(d.get("label")).lower() == str(doc_id).lower()):
+            d["verification_status"] = status
+            d["officer_reviewed_at"] = now_iso
+            d["officer_notes"] = notes
+            doc_label = d.get("label", doc_id)
+            doc_found = True
+            break
+
+    if not doc_found:
+        new_entry = {
+            "doc_id": doc_id,
+            "label": data.get("label", doc_id),
+            "verification_status": status,
+            "officer_reviewed_at": now_iso,
+            "officer_notes": notes,
+        }
+        loan_docs.append(new_entry)
+        doc_label = new_entry.get("label", doc_id)
+
+    db["loan_applications"].update_one(
+        {"_id": oid},
+        {"$set": {"loan_documents": loan_docs, "updated_at": now_iso}}
+    )
+    updated = serialize(db["loan_applications"].find_one({"_id": oid}))
+
+    try:
+        app_email = doc.get("email", "")
+        loan_ref = str(loan_id)[:8]
+        if status == "Verified":
+            create_notification(
+                email=app_email,
+                title=f"Document Verified: {doc_label}",
+                desc=f"Your '{doc_label}' document has been verified by the loan officer (Loan #{loan_ref}).",
+                n_type="success",
+                link="/approvals",
+                role="user",
+                metadata={"loan_id": str(loan_id), "doc_id": doc_id}
+            )
+        elif status == "Rejected":
+            create_notification(
+                email=app_email,
+                title=f"Document Rejected: {doc_label}",
+                desc=f"Underwriter rejected '{doc_label}'. Remarks: {notes or 'Please re-upload a clear copy.'}",
+                n_type="error",
+                link="/apply",
+                role="user",
+                metadata={"loan_id": str(loan_id), "doc_id": doc_id}
+            )
+    except Exception as e:
+        print(f"[loan_routes] Notification error on update_document_status: {e}")
+
+    return jsonify({
+        "success": True,
+        "message": f"Document '{doc_label}' status updated to '{status}'.",
+        "application": updated
+    }), 200
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ROUTE 4C - Request Additional Document from Borrower
+# POST /loan/applications/<loan_id>/request-document
+# ═══════════════════════════════════════════════════════════════════
+@loan_bp.route("/applications/<loan_id>/request-document", methods=["POST"])
+def request_additional_document(loan_id):
+    oid = valid_object_id(loan_id)
+    if oid is None:
+        return jsonify({"success": False, "error": "Invalid loan ID format."}), 400
+
+    data = request.get_json(silent=True) or {}
+    document_name = str(data.get("document_name", "")).strip()
+    notes = str(data.get("notes", "")).strip()
+
+    if not document_name:
+        return jsonify({"success": False, "error": "Document name is required."}), 400
+
+    db = get_loan_db()
+    if db is None:
+        return jsonify({"success": False, "error": "Database unavailable."}), 503
+
+    doc = db["loan_applications"].find_one({"_id": oid})
+    if doc is None:
+        return jsonify({"success": False, "error": "Loan application not found."}), 404
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    req_item = {
+        "id": f"req_{secrets.token_hex(4)}",
+        "document_name": document_name,
+        "label": document_name,
+        "notes": notes,
+        "status": "Requested",
+        "requested_at": now_iso
+    }
+
+    req_list = list(doc.get("additional_documents_requested", []))
+    req_list.append(req_item)
+
+    db["loan_applications"].update_one(
+        {"_id": oid},
+        {"$set": {"additional_documents_requested": req_list, "updated_at": now_iso}}
+    )
+    updated = serialize(db["loan_applications"].find_one({"_id": oid}))
+
+    try:
+        app_email = doc.get("email", "")
+        loan_ref = str(loan_id)[:8]
+        create_notification(
+            email=app_email,
+            title=f"Additional Document Requested: {document_name}",
+            desc=f"Underwriter requested '{document_name}' for Loan #{loan_ref}. Notes: {notes or 'Required for underwriting assessment.'}",
+            n_type="warning",
+            link="/apply",
+            role="user",
+            metadata={"loan_id": str(loan_id), "document_name": document_name}
+        )
+    except Exception as e:
+        print(f"[loan_routes] Notification error on request_additional_document: {e}")
+
+    return jsonify({
+        "success": True,
+        "message": f"Requested '{document_name}' from applicant.",
+        "requested_item": req_item,
+        "application": updated
+    }), 201
+
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -584,6 +815,31 @@ def record_utilization():
     }
     result = db["loan_utilization"].insert_one(util_event)
     util_event["_id"] = str(result.inserted_id)
+
+    # Automatically dispatch notifications for utilization / drawdown
+    try:
+        app_email = loan.get("email", "")
+        loan_ref = str(loan_id)[:8]
+        create_notification(
+            email=app_email,
+            title=f"Drawdown Recorded: {event_type}",
+            desc=f"₹{amount:,.0f} recorded for '{data.get('category', 'Expense')}' (Loan #{loan_ref}). Remaining balance: ₹{new_balance:,.0f}.",
+            n_type="info",
+            link="/utilization",
+            role="user",
+            metadata={"loan_id": str(loan_id), "event_id": util_event["_id"]}
+        )
+        create_notification(
+            email="",
+            title=f"Borrower Drawdown: ₹{amount:,.0f}",
+            desc=f"{loan.get('applicant_name', 'Borrower')} recorded {event_type} on Loan #{loan_ref}.",
+            n_type="info",
+            link="/utilization",
+            role="officer",
+            metadata={"loan_id": str(loan_id), "event_id": util_event["_id"]}
+        )
+    except Exception as e:
+        print(f"[loan_routes] Notification error on record_utilization: {e}")
 
     return jsonify({
         "success": True,
@@ -809,6 +1065,32 @@ def repay_loan():
     repay_event["tenure_months"] = tenure_months
     repay_event["emi_amount"] = emi_amount
     repay_event["repayment_summary"] = repayment_summary
+
+    # Automatically dispatch notifications for repayment
+    try:
+        app_email = loan.get("email", "")
+        loan_ref = str(loan_id)[:8]
+        create_notification(
+            email=app_email,
+            title=f"Payment Received: ₹{amount:,.0f} ({event_name})",
+            desc=f"Payment credited successfully via {payment_mode}. Remaining loan balance: ₹{new_balance:,.0f}.",
+            n_type="success",
+            link="/repay",
+            role="user",
+            metadata={"loan_id": str(loan_id), "txn_ref": txn_ref}
+        )
+        if new_balance <= 0:
+            create_notification(
+                email=app_email,
+                title="Loan Fully Paid Off! 🎉",
+                desc=f"Congratulations! Loan #{loan_ref} has been completely repaid in full.",
+                n_type="success",
+                link="/repay",
+                role="user",
+                metadata={"loan_id": str(loan_id)}
+            )
+    except Exception as e:
+        print(f"[loan_routes] Notification error on repay_loan: {e}")
 
     return jsonify({
         "success": True,
@@ -1075,6 +1357,198 @@ def dashboard():
         "monthly_trend": trend,
         "recent_applications": recent
     })
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Notification System & Endpoints
+# ═══════════════════════════════════════════════════════════════════
+
+_MEMORY_NOTIFICATIONS = []
+
+
+def create_notification(email="", title="", desc="", n_type="info", link="/", role="user", metadata=None):
+    """Create and persist a notification to MongoDB (loan_notifications) or in-memory fallback."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    clean_email = (email or "").strip().lower()
+    notif = {
+        "email": clean_email,
+        "role": role or "user",
+        "title": title,
+        "desc": desc,
+        "type": n_type,  # "info", "success", "warning", "error"
+        "link": link or "/",
+        "read": False,
+        "created_at": now_iso,
+        "metadata": metadata or {}
+    }
+    db = get_loan_db()
+    if db is not None:
+        try:
+            res = db["loan_notifications"].insert_one(notif)
+            notif["_id"] = str(res.inserted_id)
+            return notif
+        except Exception as e:
+            print(f"[loan_routes] Failed to save notification to MongoDB: {e}")
+    notif["_id"] = secrets.token_hex(8)
+    _MEMORY_NOTIFICATIONS.insert(0, notif)
+    return notif
+
+
+@loan_bp.route("/notifications", methods=["GET"])
+def get_notifications():
+    email = (request.args.get("email") or "").strip().lower()
+    role = (request.args.get("role") or "").strip().lower()
+    unread_only = request.args.get("unread_only", "").lower() in ("true", "1")
+
+    db = get_loan_db()
+    notifs = []
+    if db is not None:
+        try:
+            query = {}
+            if email and role == "officer":
+                query["$or"] = [{"email": email}, {"role": "officer"}, {"email": ""}]
+            elif email:
+                query["$or"] = [{"email": email}, {"email": ""}]
+            elif role == "officer":
+                query["$or"] = [{"role": "officer"}, {"email": ""}]
+            if unread_only:
+                query["read"] = False
+
+            cursor = db["loan_notifications"].find(query).sort("created_at", DESCENDING).limit(50)
+            notifs = [serialize(d) for d in cursor]
+        except Exception as e:
+            print(f"[loan_routes] Error fetching notifications from MongoDB: {e}")
+
+    # Fallback/merge with memory store
+    if not notifs:
+        filtered_mem = []
+        for n in _MEMORY_NOTIFICATIONS:
+            if email and n.get("email") and n.get("email") != email and n.get("role") != role:
+                continue
+            if unread_only and n.get("read"):
+                continue
+            filtered_mem.append(dict(n))
+        notifs = filtered_mem[:50]
+
+    unread_count = sum(1 for n in notifs if not n.get("read"))
+    return jsonify({
+        "success": True,
+        "notifications": notifs,
+        "unread_count": unread_count
+    }), 200
+
+
+@loan_bp.route("/notifications", methods=["POST"])
+def post_notification():
+    data = request.get_json(silent=True) or {}
+    title = (data.get("title") or "").strip()
+    desc = (data.get("desc") or "").strip()
+    if not title:
+        return jsonify({"success": False, "error": "Notification title is required."}), 400
+
+    notif = create_notification(
+        email=data.get("email", ""),
+        title=title,
+        desc=desc,
+        n_type=data.get("type", "info"),
+        link=data.get("link", "/"),
+        role=data.get("role", "user"),
+        metadata=data.get("metadata", {})
+    )
+    return jsonify({"success": True, "notification": notif}), 201
+
+
+@loan_bp.route("/notifications/<notif_id>/read", methods=["PUT"])
+def mark_notification_read(notif_id):
+    db = get_loan_db()
+    if db is not None:
+        try:
+            oid = valid_object_id(notif_id)
+            if oid is not None:
+                db["loan_notifications"].update_one({"_id": oid}, {"$set": {"read": True}})
+            else:
+                db["loan_notifications"].update_one({"_id": notif_id}, {"$set": {"read": True}})
+        except Exception as e:
+            print(f"[loan_routes] Error updating notification in MongoDB: {e}")
+
+    for n in _MEMORY_NOTIFICATIONS:
+        if str(n.get("_id")) == str(notif_id):
+            n["read"] = True
+
+    return jsonify({"success": True, "message": "Notification marked as read."}), 200
+
+
+@loan_bp.route("/notifications/read-all", methods=["PUT"])
+def mark_all_notifications_read():
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or request.args.get("email") or "").strip().lower()
+    role = (data.get("role") or request.args.get("role") or "").strip().lower()
+
+    db = get_loan_db()
+    if db is not None:
+        try:
+            query = {}
+            if email and role == "officer":
+                query["$or"] = [{"email": email}, {"role": "officer"}, {"email": ""}]
+            elif email:
+                query["$or"] = [{"email": email}, {"email": ""}]
+            elif role == "officer":
+                query["$or"] = [{"role": "officer"}, {"email": ""}]
+            db["loan_notifications"].update_many(query, {"$set": {"read": True}})
+        except Exception as e:
+            print(f"[loan_routes] Error mark_all_notifications_read MongoDB: {e}")
+
+    for n in _MEMORY_NOTIFICATIONS:
+        if not email or n.get("email") == email or n.get("role") == role or not n.get("email"):
+            n["read"] = True
+
+    return jsonify({"success": True, "message": "All notifications marked as read."}), 200
+
+
+@loan_bp.route("/notifications/<notif_id>", methods=["DELETE"])
+def delete_notification(notif_id):
+    db = get_loan_db()
+    if db is not None:
+        try:
+            oid = valid_object_id(notif_id)
+            if oid is not None:
+                db["loan_notifications"].delete_one({"_id": oid})
+            else:
+                db["loan_notifications"].delete_one({"_id": notif_id})
+        except Exception as e:
+            print(f"[loan_routes] Error deleting notification from MongoDB: {e}")
+
+    global _MEMORY_NOTIFICATIONS
+    _MEMORY_NOTIFICATIONS = [n for n in _MEMORY_NOTIFICATIONS if str(n.get("_id")) != str(notif_id)]
+
+    return jsonify({"success": True, "message": "Notification deleted."}), 200
+
+
+@loan_bp.route("/notifications", methods=["DELETE"])
+def clear_all_notifications():
+    email = (request.args.get("email") or "").strip().lower()
+    role = (request.args.get("role") or "").strip().lower()
+
+    db = get_loan_db()
+    if db is not None:
+        try:
+            query = {}
+            if email:
+                query["email"] = email
+            elif role == "officer":
+                query["role"] = "officer"
+            db["loan_notifications"].delete_many(query)
+        except Exception as e:
+            print(f"[loan_routes] Error clear_all_notifications MongoDB: {e}")
+
+    global _MEMORY_NOTIFICATIONS
+    if email:
+        _MEMORY_NOTIFICATIONS = [n for n in _MEMORY_NOTIFICATIONS if n.get("email") != email]
+    else:
+        _MEMORY_NOTIFICATIONS = []
+
+    return jsonify({"success": True, "message": "All notifications cleared."}), 200
+
 
 _MEMORY_USERS = {}
 _PENDING_VERIFICATIONS = {}

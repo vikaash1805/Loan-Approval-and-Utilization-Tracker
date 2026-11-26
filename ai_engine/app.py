@@ -1209,7 +1209,7 @@ def match_names(user_name, extracted_name):
     if u_tokens.issubset(e_tokens) or e_tokens.issubset(u_tokens):
         return True
         
-    # Ignore single-letter initials (e.g. Vikaash V vs Vikaash)
+    # Ignore single-letter initials (e.g. Sample A vs Sample Applicant)
     u_long = {w for w in u_tokens if len(w) > 1}
     e_long = {w for w in e_tokens if len(w) > 1}
     if u_long and e_long and (u_long == e_long or u_long.issubset(e_long) or e_long.issubset(u_long)):

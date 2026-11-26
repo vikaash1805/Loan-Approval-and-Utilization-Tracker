@@ -919,7 +919,7 @@ export default function LoanApplication() {
               <label>Full Legal Name (as per ID Cards) *</label>
               <input
                 className="form-control"
-                placeholder="Enter full legal name"
+                placeholder="e.g. Sample Applicant"
                 value={personal.applicant_name}
                 onChange={(e) => setP("applicant_name", e.target.value)}
               />
@@ -949,7 +949,7 @@ export default function LoanApplication() {
               <input
                 className="form-control"
                 type="email"
-                placeholder="Enter email address"
+                placeholder="sample@example.com"
                 value={personal.email}
                 onChange={(e) => setP("email", e.target.value)}
               />
@@ -958,7 +958,7 @@ export default function LoanApplication() {
               <label>Contact Phone Number *</label>
               <input
                 className="form-control"
-                placeholder="Enter contact phone number"
+                placeholder="e.g. 98XXXXXXXX"
                 value={personal.phone}
                 onChange={(e) => setP("phone", e.target.value)}
               />
@@ -1159,6 +1159,7 @@ export default function LoanApplication() {
               <input
                 type="date"
                 className="form-control"
+                placeholder="DD/MM/YYYY"
                 value={idFields.user_dob}
                 onChange={(e) => setI("user_dob", e.target.value)}
               />
@@ -1265,7 +1266,7 @@ export default function LoanApplication() {
                 <div style={{ position: "relative" }}>
                   <input
                     className="form-control"
-                    placeholder="Enter 12-digit Aadhaar number"
+                    placeholder="Enter 12-digit Aadhaar number (e.g. XXXX XXXX 1234)"
                     value={aadhaarMatched ? "•••• •••• ••••" : idFields.user_aadhaar}
                     onChange={handleAadhaarNumberChange}
                     disabled={aadhaarMatched}
@@ -1659,7 +1660,7 @@ export default function LoanApplication() {
                 <div style={{ position: "relative" }}>
                   <input
                     className="form-control"
-                    placeholder="Enter 10-character PAN number"
+                    placeholder="Enter 10-character PAN number (e.g. ABCDE1234F)"
                     value={panMatched ? "••••••••••" : idFields.user_pan}
                     onChange={handlePanNumberChange}
                     disabled={!aadhaarMatched || panMatched}

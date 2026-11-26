@@ -1558,7 +1558,7 @@ _PENDING_PASSWORD_RESETS = {}
 def send_verification_email(to_email: str, otp_code: str, purpose: str = "registration"):
     """
     Multi-channel verification email delivery:
-    1. Resend API (HTTP & SDK) - delivers to vikaash1805@gmail.com or custom domain
+    1. Resend API (HTTP & SDK) - delivers to verified domain or account address
     2. SMTP (if SMTP_SERVER is configured) - standard SMTP for any recipient
     3. Smart Sandbox Fallback - if test restrictions prevent external delivery,
        prominently prints OTP to server terminal and provides dev_otp to prevent breaking registration.
@@ -1682,8 +1682,8 @@ def send_verification_email(to_email: str, otp_code: str, purpose: str = "regist
 
     # 3. If email could not be physically dispatched via Resend or SMTP:
     err_detail = last_error_msg or "Failed to deliver email."
-    if "own email address" in err_detail or "vikaash1805@gmail.com" in err_detail:
-        user_err = f"Verification email could not be delivered to {to_email}. The Resend test domain only sends to vikaash1805@gmail.com. To receive real emails to other addresses, please configure SMTP in .env or test with vikaash1805@gmail.com."
+    if "own email address" in err_detail:
+        user_err = f"Verification email could not be delivered to {to_email}. The Resend test domain only sends to your registered account email. To receive real emails to other addresses, please configure SMTP in .env or verify your domain in Resend."
     else:
         user_err = f"Failed to dispatch verification email to {to_email}: {err_detail}"
 
